@@ -1,3 +1,4 @@
+[project]
 name = "traceprop"
 version = "0.5.0"
 description = "Computation-level lineage tracking for NumPy"
