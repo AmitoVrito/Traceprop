@@ -1,0 +1,26 @@
+{
+  "100": {
+    "uncompressed_edges": 1,
+    "compressed_edges": 1,
+    "range_descriptors": 0,
+    "compression_ratio": 1.0
+  },
+  "250": {
+    "uncompressed_edges": 1,
+    "compressed_edges": 1,
+    "range_descriptors": 2,
+    "compression_ratio": 0.33
+  },
+  "500": {
+    "uncompressed_edges": 1,
+    "compressed_edges": 1,
+    "range_descriptors": 2,
+    "compression_ratio": 0.33
+  },
+  "1000": {
+    "uncompressed_edges": 1,
+    "compressed_edges": 1,
+    "range_descriptors": 2,
+    "compression_ratio": 0.33
+  }
+}

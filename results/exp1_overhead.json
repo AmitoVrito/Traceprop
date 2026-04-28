@@ -1,0 +1,49 @@
+{
+  "element_wise": {
+    "1000": {
+      "vanilla_ms": 0.0099,
+      "op_ms": 0.0453,
+      "op_overhead": 4.573,
+      "batch_ms": 0.0449,
+      "batch_overhead": 4.533
+    },
+    "10000": {
+      "vanilla_ms": 0.0286,
+      "op_ms": 0.0662,
+      "op_overhead": 2.312,
+      "batch_ms": 0.1014,
+      "batch_overhead": 3.543
+    },
+    "100000": {
+      "vanilla_ms": 0.1778,
+      "op_ms": 0.2007,
+      "op_overhead": 1.129,
+      "batch_ms": 0.2044,
+      "batch_overhead": 1.15
+    },
+    "1000000": {
+      "vanilla_ms": 4.1169,
+      "op_ms": 4.1448,
+      "op_overhead": 1.007,
+      "batch_ms": 4.2483,
+      "batch_overhead": 1.032
+    }
+  },
+  "matmul": {
+    "100": {
+      "baseline_ms": 0.0684,
+      "tp_ms": 0.0802,
+      "overhead": 1.172
+    },
+    "500": {
+      "baseline_ms": 1.1133,
+      "tp_ms": 1.2238,
+      "overhead": 1.099
+    },
+    "1000": {
+      "baseline_ms": 9.3451,
+      "tp_ms": 9.7996,
+      "overhead": 1.049
+    }
+  }
+}

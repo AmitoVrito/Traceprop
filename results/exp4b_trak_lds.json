@@ -1,0 +1,13 @@
+{
+  "trak_lds_mean": 0.0257,
+  "trak_lds_std": 0.0395,
+  "random_lds_mean": -0.0005,
+  "n_train": 2000,
+  "n_test": 200,
+  "n_subsets": 50,
+  "n_features": 50,
+  "proj_dim": 4096,
+  "full_model_accuracy": 0.54,
+  "trak_time_s": 0.6,
+  "model_type": "torch_linear"
+}

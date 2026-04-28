@@ -1,0 +1,127 @@
+{
+  "k=256_n=1000": {
+    "proj_dim": 256,
+    "n_samples": 1000,
+    "theoretical_memory_gb": 0.001
+  },
+  "k=256_n=10000": {
+    "proj_dim": 256,
+    "n_samples": 10000,
+    "theoretical_memory_gb": 0.01
+  },
+  "k=256_n=100000": {
+    "proj_dim": 256,
+    "n_samples": 100000,
+    "theoretical_memory_gb": 0.095
+  },
+  "k=256_n=1000000": {
+    "proj_dim": 256,
+    "n_samples": 1000000,
+    "theoretical_memory_gb": 0.954
+  },
+  "k=256_n=10000000": {
+    "proj_dim": 256,
+    "n_samples": 10000000,
+    "theoretical_memory_gb": 9.537
+  },
+  "k=512_n=1000": {
+    "proj_dim": 512,
+    "n_samples": 1000,
+    "theoretical_memory_gb": 0.002
+  },
+  "k=512_n=10000": {
+    "proj_dim": 512,
+    "n_samples": 10000,
+    "theoretical_memory_gb": 0.019
+  },
+  "k=512_n=100000": {
+    "proj_dim": 512,
+    "n_samples": 100000,
+    "theoretical_memory_gb": 0.191
+  },
+  "k=512_n=1000000": {
+    "proj_dim": 512,
+    "n_samples": 1000000,
+    "theoretical_memory_gb": 1.907
+  },
+  "k=512_n=10000000": {
+    "proj_dim": 512,
+    "n_samples": 10000000,
+    "theoretical_memory_gb": 19.073
+  },
+  "k=1024_n=1000": {
+    "proj_dim": 1024,
+    "n_samples": 1000,
+    "theoretical_memory_gb": 0.004
+  },
+  "k=1024_n=10000": {
+    "proj_dim": 1024,
+    "n_samples": 10000,
+    "theoretical_memory_gb": 0.038
+  },
+  "k=1024_n=100000": {
+    "proj_dim": 1024,
+    "n_samples": 100000,
+    "theoretical_memory_gb": 0.381
+  },
+  "k=1024_n=1000000": {
+    "proj_dim": 1024,
+    "n_samples": 1000000,
+    "theoretical_memory_gb": 3.815
+  },
+  "k=1024_n=10000000": {
+    "proj_dim": 1024,
+    "n_samples": 10000000,
+    "theoretical_memory_gb": 38.147
+  },
+  "k=2048_n=1000": {
+    "proj_dim": 2048,
+    "n_samples": 1000,
+    "theoretical_memory_gb": 0.008
+  },
+  "k=2048_n=10000": {
+    "proj_dim": 2048,
+    "n_samples": 10000,
+    "theoretical_memory_gb": 0.076
+  },
+  "k=2048_n=100000": {
+    "proj_dim": 2048,
+    "n_samples": 100000,
+    "theoretical_memory_gb": 0.763
+  },
+  "k=2048_n=1000000": {
+    "proj_dim": 2048,
+    "n_samples": 1000000,
+    "theoretical_memory_gb": 7.629
+  },
+  "k=2048_n=10000000": {
+    "proj_dim": 2048,
+    "n_samples": 10000000,
+    "theoretical_memory_gb": 76.294
+  },
+  "k=4096_n=1000": {
+    "proj_dim": 4096,
+    "n_samples": 1000,
+    "theoretical_memory_gb": 0.015
+  },
+  "k=4096_n=10000": {
+    "proj_dim": 4096,
+    "n_samples": 10000,
+    "theoretical_memory_gb": 0.153
+  },
+  "k=4096_n=100000": {
+    "proj_dim": 4096,
+    "n_samples": 100000,
+    "theoretical_memory_gb": 1.526
+  },
+  "k=4096_n=1000000": {
+    "proj_dim": 4096,
+    "n_samples": 1000000,
+    "theoretical_memory_gb": 15.259
+  },
+  "k=4096_n=10000000": {
+    "proj_dim": 4096,
+    "n_samples": 10000000,
+    "theoretical_memory_gb": 152.588
+  }
+}

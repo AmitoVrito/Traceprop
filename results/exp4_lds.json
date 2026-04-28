@@ -1,0 +1,12 @@
+{
+  "traceprop_lds_mean": 0.0263,
+  "traceprop_lds_std": 0.041,
+  "random_lds_mean": -0.0015,
+  "n_train": 2000,
+  "n_test": 200,
+  "n_subsets": 50,
+  "n_features": 50,
+  "proj_dim": 4096,
+  "full_model_accuracy": 0.555,
+  "model_type": "logistic_regression"
+}

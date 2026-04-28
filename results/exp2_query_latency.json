@@ -1,0 +1,44 @@
+{
+  "10": {
+    "graph_nodes": 21,
+    "graph_edges": 20,
+    "sources_query_ms": 0.0005,
+    "ops_query_ms": 0.0007,
+    "ancestors_query_ms": 0.0076
+  },
+  "50": {
+    "graph_nodes": 101,
+    "graph_edges": 100,
+    "sources_query_ms": 0.0005,
+    "ops_query_ms": 0.0006,
+    "ancestors_query_ms": 0.0176
+  },
+  "100": {
+    "graph_nodes": 201,
+    "graph_edges": 200,
+    "sources_query_ms": 0.0004,
+    "ops_query_ms": 0.0006,
+    "ancestors_query_ms": 0.0341
+  },
+  "500": {
+    "graph_nodes": 1001,
+    "graph_edges": 1000,
+    "sources_query_ms": 0.0005,
+    "ops_query_ms": 0.0006,
+    "ancestors_query_ms": 0.1814
+  },
+  "1000": {
+    "graph_nodes": 2001,
+    "graph_edges": 2000,
+    "sources_query_ms": 0.0005,
+    "ops_query_ms": 0.0007,
+    "ancestors_query_ms": 0.4232
+  },
+  "5000": {
+    "graph_nodes": 10001,
+    "graph_edges": 10000,
+    "sources_query_ms": 0.0005,
+    "ops_query_ms": 0.0007,
+    "ancestors_query_ms": 2.6357
+  }
+}
