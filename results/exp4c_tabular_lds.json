@@ -1,0 +1,27 @@
+{
+  "benchmark": "Adult-Income/LogisticRegression",
+  "n_train": 6000,
+  "n_test": 1500,
+  "n_features": 100,
+  "n_subsets": 500,
+  "full_model_accuracy": 0.8013,
+  "traceprop_lastlayer": {
+    "lds_mean": 0.6222,
+    "lds_std": 0.1801,
+    "time_s": 0.22,
+    "method": "per_sample_exact_gradient_logreg"
+  },
+  "traceprop_batchmean": {
+    "lds_mean": 0.0127,
+    "lds_std": 0.0436,
+    "time_s": 0.163,
+    "method": "batch_mean_gradient_logreg"
+  },
+  "random": {
+    "lds_mean": -0.0081,
+    "lds_std": 0.0443
+  },
+  "retrain_time_s": 37.1,
+  "device": "cpu",
+  "notes": "sklearn lbfgs, C=10, max_iter=200. Traceprop-LL = exact per-sample gradient for linear model (last-layer = full gradient). No GPU needed."
+}

@@ -1,35 +1,81 @@
 [project]
 name = "traceprop"
 version = "0.5.0"
-description = "Computation-level lineage tracking for NumPy"
+description = "End-to-end data provenance for machine learning pipelines"
+readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = {file = "LICENSE"}
+authors = [
+  {name = "Amit N.", email = "research.amit.n@gmail.com"},
+]
+keywords = [
+  "provenance",
+  "data lineage",
+  "machine learning",
+  "data attribution",
+  "machine unlearning",
+  "explainability",
+  "eu ai act",
+  "numpy",
+  "pytorch",
+  "jax",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Typing :: Typed",
+]
 dependencies = [
-    "numpy>=1.24",
+  "numpy>=1.24",
 ]
 
+[project.urls]
+Homepage = "https://github.com/AmitoVrito/Traceprop"
+Repository = "https://github.com/AmitoVrito/Traceprop"
+"Bug Tracker" = "https://github.com/AmitoVrito/Traceprop/issues"
+
 [project.optional-dependencies]
-sqlite = []
+torch = ["torch>=2.0"]
+jax = ["jax>=0.4.1"]
 otel = ["opentelemetry-api>=1.20", "opentelemetry-sdk>=1.20"]
 parquet = ["pyarrow>=14.0"]
-jax = ["jax>=0.4.1"]
-torch = ["torch>=2.0"]
-attribution = ["numpy>=1.24"]
-unlearning = ["numpy>=1.24"]
 postgres = ["psycopg2-binary>=2.9"]
 dev = [
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "cython>=3.0",
+  "pytest>=7.0",
+  "pytest-cov>=4.0",
+  "cython>=3.0",
+  "build>=1.0",
+  "twine>=5.0",
 ]
-all = ["traceprop[otel,parquet,jax,torch,attribution,unlearning,postgres,dev]"]
+all = ["traceprop[torch,jax,otel,parquet,postgres]"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["traceprop"]
+exclude = [
+  "traceprop/_c_ext/*.c",
+  "traceprop/_c_ext/*.pyx",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.coverage.run]
-omit = ["traceprop/exporters.py", "traceprop/_c_ext/*", "traceprop/backends/jax_backend.py", "traceprop/backends/torch_backend.py", "traceprop/stores/postgres_store.py", "traceprop/compliance/*", "traceprop/attribution/*", "traceprop/unlearning/*", "traceprop/valuation/*"]
+omit = [
+  "traceprop/exporters.py",
+  "traceprop/_c_ext/*",
+  "traceprop/backends/jax_backend.py",
+  "traceprop/backends/torch_backend.py",
+  "traceprop/stores/postgres_store.py",
+]
