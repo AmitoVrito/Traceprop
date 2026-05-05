@@ -18,7 +18,7 @@ pip install traceprop
 
 A single Traceprop query answers:
 
-> *"This model made prediction X on input Z. Which rows in which source files, through which preprocessing steps, most influenced that prediction — and can we reduce that influence without retraining?"*
+> *"This model made prediction X on input Z. Which rows in which source files, through which preprocessing steps, most influenced that prediction - and can we reduce that influence without retraining?"*
 
 | Capability | What you get |
 |---|---|
@@ -322,10 +322,10 @@ pytest
 If you use Traceprop in research, please cite:
 
 ```bibtex
-@misc{traceprop2025,
+@misc{traceprop2026,
   author  = {Amit N.},
   title   = {Traceprop: End-to-End Data Provenance for Machine Learning Pipelines},
-  year    = {2025},
+  year    = {2026},
   url     = {https://github.com/AmitoVrito/Traceprop},
 }
 ```
