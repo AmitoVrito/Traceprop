@@ -11,6 +11,7 @@ pip install traceprop
 [![PyPI](https://img.shields.io/pypi/v/traceprop)](https://pypi.org/project/traceprop/)
 [![Python](https://img.shields.io/pypi/pyversions/traceprop)](https://pypi.org/project/traceprop/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20035922.svg)](https://doi.org/10.5281/zenodo.20035922)
 
 ---
 
