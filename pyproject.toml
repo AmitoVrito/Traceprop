@@ -79,3 +79,8 @@ omit = [
   "traceprop/backends/torch_backend.py",
   "traceprop/stores/postgres_store.py",
 ]
+
+[dependency-groups]
+dev = [
+    "scipy>=1.15.3",
+]

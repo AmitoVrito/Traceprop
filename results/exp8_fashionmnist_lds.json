@@ -1,0 +1,20 @@
+{
+  "experiment": "exp8_fashionmnist_mlp_lds",
+  "dataset": "fashionmnist_binary_0vs1",
+  "model": "mlp_no_batchnorm_784_256_1",
+  "n_train": 6000,
+  "n_test": 500,
+  "n_subsets": 500,
+  "proj_dim": 4096,
+  "train_acc": 0.8467,
+  "test_acc": 0.756,
+  "tp_ll_lds_mean": -0.0235,
+  "tp_ll_lds_std": 0.4737,
+  "tp_ll_time_s": 1.25,
+  "tp_bm_lds_mean": 0.0146,
+  "tp_bm_lds_std": 0.0383,
+  "tp_bm_time_s": 2563.16,
+  "random_lds_mean": 0.0032,
+  "random_lds_std": 0.0457,
+  "retrain_time_s": 346.2
+}

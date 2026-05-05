@@ -324,12 +324,17 @@ If you use Traceprop in research, please cite:
 
 ```bibtex
 @misc{traceprop2026,
-  author  = {Amit N.},
-  title   = {Traceprop: End-to-End Data Provenance for Machine Learning Pipelines},
-  year    = {2026},
-  url     = {https://github.com/AmitoVrito/Traceprop},
+  author       = {Amit N.},
+  title        = {Traceprop: End-to-End Provenance-Guided Data Attribution
+                  for Auditable Machine Learning},
+  year         = {2026},
+  doi          = {10.5281/zenodo.20036000},
+  url          = {https://zenodo.org/records/20036000},
+  note         = {Preprint. Software available at https://pypi.org/project/traceprop/}
 }
 ```
+
+A Zenodo preprint is available at **https://zenodo.org/records/20036000** (DOI: 10.5281/zenodo.20036000).
 
 ---
 
