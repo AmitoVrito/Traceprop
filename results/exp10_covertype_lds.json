@@ -1,0 +1,27 @@
+{
+  "experiment": "exp10_covertype_lds",
+  "dataset": "covertype_binary_class2_vs_rest",
+  "n_train": 50000,
+  "n_test": 500,
+  "n_subsets": 500,
+  "n_features": 54,
+  "proj_dim": 4096,
+  "C": 10.0,
+  "max_iter": 200,
+  "tp_ll_dot": {
+    "lds_mean": 0.7513,
+    "lds_std": 0.1292,
+    "time_s": 3.37
+  },
+  "tp_ll_trak": {
+    "lds_mean": 0.9763,
+    "lds_std": 0.1052,
+    "time_s": 5.22
+  },
+  "random": {
+    "lds_mean": 0.0036,
+    "lds_std": 0.0416
+  },
+  "retrain_time_s": 79.2,
+  "test_accuracy": 0.698
+}
