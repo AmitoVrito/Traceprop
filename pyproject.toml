@@ -1,6 +1,6 @@
 [project]
 name = "traceprop"
-version = "0.5.0"
+version = "0.6.0"
 description = "Computation-level data lineage, gradient attribution, and provenance-guided unlearning in production ML"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -39,8 +39,7 @@ classifiers = [
 ]
 dependencies = [
   "numpy>=1.24",
-  "pandas>=2.3.3",
-  "scikit-learn>=1.7.2",
+  "scipy>=1.7",
 ]
 
 [project.urls]

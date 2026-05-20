@@ -12,7 +12,7 @@ from traceprop.graph import get_graph, reset_graph
 from traceprop.query import ProvenanceView
 from traceprop.tensor import ProvenanceTensor
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 
 def array(data: Any, dtype=None, source_id: str | None = None, **kwargs) -> ProvenanceTensor:
@@ -105,10 +105,13 @@ def training_context(
     )
 
 
-def attribution_engine(gradient_store: Any):
-    """Create an AttributionEngine from a saved or in-memory GradientStore."""
+def attribution_engine(gradient_store: Any, estimator: str = "dot", lambda_factor: float = 1e-3):
+    """Create an AttributionEngine from a saved or in-memory GradientStore.
+
+    estimator: "dot" (default, fast) or "trak" (regularised inverse-Gram, higher quality)
+    """
     from .attribution.attribution_engine import AttributionEngine
-    return AttributionEngine(gradient_store=gradient_store)
+    return AttributionEngine(gradient_store=gradient_store, estimator=estimator, lambda_factor=lambda_factor)
 
 
 def unlearn(
