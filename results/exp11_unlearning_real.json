@@ -1,0 +1,27 @@
+{
+  "experiment": "exp11_unlearning_real",
+  "dataset": "adult_income",
+  "n_train": 6000,
+  "n_test": 500,
+  "forget_k": 50,
+  "eta": 0.1,
+  "C": 10.0,
+  "max_iter": 200,
+  "original": {
+    "forget_loss": 3.2238,
+    "test_acc": 0.84,
+    "mia_forget_quality": 1.0
+  },
+  "gold": {
+    "forget_loss": 3.8555,
+    "test_acc": 0.84,
+    "mia_forget_quality": 1.0
+  },
+  "traceprop": {
+    "forget_loss": 3.4253,
+    "test_acc": 0.842,
+    "mia_forget_quality": 1.0,
+    "gap_closed_pct": 31.9,
+    "time_s": 0.0
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "experiment": "exp15_unlearning_yeom",
+  "dataset": "adult_income",
+  "n_train": 6000,
+  "n_test": 500,
+  "forget_k": 50,
+  "C": 100.0,
+  "eta": 0.1,
+  "n_steps": 5,
+  "max_iter": 500,
+  "original": {
+    "forget_loss": 3.2253,
+    "test_acc": 0.84,
+    "mia_quality": 1.0,
+    "member_rate": 0.0
+  },
+  "gold": {
+    "forget_loss": 3.8581,
+    "test_acc": 0.84,
+    "mia_quality": 1.0,
+    "member_rate": 0.0
+  },
+  "traceprop": {
+    "forget_loss": 4.2835,
+    "test_acc": 0.842,
+    "mia_quality": 1.0,
+    "member_rate": 0.0,
+    "gap_closed_pct": 167.2,
+    "time_s": 0.0003
+  },
+  "random": {
+    "forget_loss": 3.2328,
+    "test_acc": 0.84,
+    "mia_quality": 1.0,
+    "member_rate": 0.0,
+    "gap_closed_pct": 1.2
+  },
+  "notes": "C=100 (less L2 reg \u2192 more memorization). 5-step multi-step gradient correction. Yeom et al. threshold MIA: member if loss < median train loss."
+}
