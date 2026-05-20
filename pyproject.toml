@@ -1,24 +1,28 @@
 [project]
 name = "traceprop"
 version = "0.5.0"
-description = "End-to-end data provenance for machine learning pipelines"
+description = "Computation-level data lineage, gradient attribution, and provenance-guided unlearning in production ML"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
 authors = [
-  {name = "Amit N.", email = "research.amit.n@gmail.com"},
+  {name = "Amit Nautiyal", email = "research.amit.n@gmail.com"},
 ]
 keywords = [
-  "provenance",
   "data lineage",
-  "machine learning",
-  "data attribution",
+  "data provenance",
+  "gradient attribution",
   "machine unlearning",
+  "data attribution",
+  "influence functions",
   "explainability",
   "eu ai act",
+  "compliance",
+  "production ml",
   "numpy",
   "pytorch",
   "jax",
+  "vldb",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -35,6 +39,8 @@ classifiers = [
 ]
 dependencies = [
   "numpy>=1.24",
+  "pandas>=2.3.3",
+  "scikit-learn>=1.7.2",
 ]
 
 [project.urls]
