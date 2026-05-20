@@ -1,0 +1,30 @@
+{
+  "experiment": "exp13_frozen_backbone_lds",
+  "dataset": "cifar2_airplane_vs_automobile",
+  "backbone": "resnet18_imagenet_frozen",
+  "feature_dim": 512,
+  "n_train": 10000,
+  "n_test": 500,
+  "n_subsets": 500,
+  "proj_dim": 4096,
+  "C": 10.0,
+  "max_iter": 200,
+  "linear_probe_accuracy": 0.976,
+  "feature_extraction_time_s": 520.7,
+  "tp_ll_dot": {
+    "lds_mean": 0.2642,
+    "lds_std": 0.1037,
+    "time_s": 10.15
+  },
+  "tp_ll_trak": {
+    "lds_mean": 0.2307,
+    "lds_std": 0.0459,
+    "time_s": 1.39
+  },
+  "random": {
+    "lds_mean": 0.0018,
+    "lds_std": 0.0435
+  },
+  "retrain_time_s": 62.3,
+  "notes": "Frozen ResNet18 backbone (ImageNet pre-trained). Linear probe = logistic regression. Traceprop-LL exact for this model class."
+}
