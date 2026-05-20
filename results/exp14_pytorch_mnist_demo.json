@@ -1,0 +1,23 @@
+{
+  "experiment": "exp14_pytorch_mnist_demo",
+  "dataset": "mnist_binary_0vs1",
+  "model": "mlp_no_batchnorm_784_256_1",
+  "n_train": 6000,
+  "n_test": 500,
+  "n_subsets": 200,
+  "proj_dim": 4096,
+  "epochs": 20,
+  "lr": 0.001,
+  "test_accuracy": 1.0,
+  "tp_ll_trak": {
+    "lds_mean": 0.1418,
+    "lds_std": 0.072,
+    "time_s": 1.003
+  },
+  "random": {
+    "lds_mean": -0.0069,
+    "lds_std": 0.0698
+  },
+  "retrain_time_s": 306.4,
+  "notes": "Real PyTorch training loop. Per-sample last-layer gradients. No BatchNorm. Full provenance: pixel source \u2192 training row \u2192 influence score."
+}

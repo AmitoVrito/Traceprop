@@ -1,0 +1,23 @@
+{
+  "experiment": "exp14b_pytorch_mnist_harder",
+  "dataset": "mnist_binary_4vs9",
+  "model": "mlp_no_batchnorm_784_256_1",
+  "n_train": 6000,
+  "n_test": 500,
+  "n_subsets": 500,
+  "proj_dim": 4096,
+  "epochs": 20,
+  "lr": 0.001,
+  "test_accuracy": 0.984,
+  "tp_ll_trak": {
+    "lds_mean": 0.193,
+    "lds_std": 0.0581,
+    "time_s": 0.82
+  },
+  "random": {
+    "lds_mean": 0.0005,
+    "lds_std": 0.0463
+  },
+  "retrain_time_s": 532.4,
+  "notes": "Harder MNIST pair (4 vs 9). 500 subsets. Per-sample last-layer gradients. No BatchNorm."
+}
