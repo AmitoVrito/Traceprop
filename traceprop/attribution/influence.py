@@ -51,6 +51,116 @@ def compute_influence_scores(
     return scores
 
 
+def compute_trak_scores(
+    test_gradient: np.ndarray,
+    train_store: "GradientStore",
+    lambda_factor: float = 1e-3,
+    gram_factor: Optional[Any] = None,
+    normalize: bool = True,
+) -> np.ndarray:
+    """TRAK estimator: φ_test @ (ΦᵀΦ + λI)⁻¹ @ Φ_train.T
+
+    Replaces the raw dot product with a regularised inverse-Gram product,
+    approximating the inverse Hessian in the projected gradient space.
+    Pre-computed gram_factor (Cholesky) can be passed for efficiency when
+    attributing many test samples against the same store.
+    """
+    import scipy.linalg
+
+    proj = train_store._projection
+    if proj is None:
+        return np.array([], dtype=np.float32)
+
+    phi_test = proj.project(test_gradient).astype(np.float64)  # (d,)
+    Phi = train_store.get_projected_matrix().astype(np.float64)  # (n, d)
+    if len(Phi) == 0:
+        return np.array([], dtype=np.float32)
+
+    if gram_factor is None:
+        d = Phi.shape[1]
+        G = Phi.T @ Phi                                    # (d, d)
+        lam = lambda_factor * np.trace(G) / d
+        G += lam * np.eye(d)
+        gram_factor = scipy.linalg.cho_factor(G)
+
+    v = scipy.linalg.cho_solve(gram_factor, phi_test)     # (d,)
+    scores = (Phi @ v).astype(np.float32)                 # (n,)
+
+    if normalize:
+        max_abs = np.abs(scores).max()
+        if max_abs > 1e-10:
+            scores = scores / max_abs
+
+    return scores
+
+
+def precompute_gram_factor(
+    train_store: "GradientStore",
+    lambda_factor: float = 1e-3,
+) -> Any:
+    """Precompute the Cholesky factor of (ΦᵀΦ + λI) for reuse across test samples."""
+    import scipy.linalg
+
+    Phi = train_store.get_projected_matrix().astype(np.float64)
+    if len(Phi) == 0:
+        return None
+    d = Phi.shape[1]
+    G = Phi.T @ Phi
+    lam = lambda_factor * np.trace(G) / d
+    G += lam * np.eye(d)
+    return scipy.linalg.cho_factor(G)
+
+
+def compute_influence_scores_multi_checkpoint(
+    test_gradient: np.ndarray,
+    checkpoint_stores: list,
+    use_trak: bool = False,
+    lambda_factor: float = 1e-3,
+    gram_factors: Optional[list] = None,
+    normalize: bool = True,
+) -> np.ndarray:
+    """Average influence scores across K checkpoint GradientStores.
+
+    Each store should have been created with a different random seed so
+    its JL projection is independent (same as TRAK's multi-checkpoint approach).
+
+    Args:
+        test_gradient:     Raw gradient vector for the test sample.
+        checkpoint_stores: List of GradientStore, one per checkpoint.
+        use_trak:          If True, use TRAK estimator per checkpoint.
+        lambda_factor:     Regularisation for TRAK estimator.
+        gram_factors:      Pre-computed Cholesky factors (one per store).
+        normalize:         L-inf normalise before averaging.
+    """
+    all_scores = []
+    for k, store in enumerate(checkpoint_stores):
+        if use_trak:
+            gf = gram_factors[k] if gram_factors else None
+            scores_k = compute_trak_scores(
+                test_gradient, store, lambda_factor=lambda_factor,
+                gram_factor=gf, normalize=normalize,
+            )
+        else:
+            proj = store._projection
+            if proj is None:
+                continue
+            phi_test = proj.project(test_gradient)
+            Phi = store.get_projected_matrix()
+            if len(Phi) == 0:
+                continue
+            scores_k = (Phi @ phi_test).astype(np.float32)
+            if normalize:
+                m = np.abs(scores_k).max()
+                if m > 1e-10:
+                    scores_k = scores_k / m
+        if len(scores_k) > 0:
+            all_scores.append(scores_k)
+
+    if not all_scores:
+        return np.array([], dtype=np.float32)
+    return np.mean(all_scores, axis=0).astype(np.float32)
+
+
 def top_k_influential(
     scores: np.ndarray,
     train_store: GradientStore,
