@@ -90,4 +90,4 @@ def test_enable_compression():
 
 
 def test_version():
-    assert tp.__version__ == "0.5.0"
+    assert tp.__version__ == "0.6.0"

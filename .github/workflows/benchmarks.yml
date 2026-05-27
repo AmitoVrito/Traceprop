@@ -21,7 +21,7 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Install dependencies
-        run: uv pip install -e ".[dev]" cython
+        run: uv sync --extra dev
 
       - name: Build C extension
         run: uv run python setup.py build_ext --inplace
