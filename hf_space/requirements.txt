@@ -1,5 +1,4 @@
 traceprop==0.6.0
-gradio>=4.44.0
 scikit-learn>=1.3
 scipy>=1.7
 numpy>=1.24
