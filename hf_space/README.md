@@ -1,5 +1,5 @@
 ---
-title: Traceprop — Training Data Attribution & Provenance
+title: Traceprop
 emoji: 🔍
 colorFrom: indigo
 colorTo: blue
@@ -8,7 +8,7 @@ sdk_version: 5.50.0
 app_file: app.py
 pinned: false
 license: apache-2.0
-short_description: Training data attribution & provenance in <1s.
+short_description: Which training data drove your prediction? Find out in <1s.
 tags:
   - data-attribution
   - machine-unlearning
@@ -20,6 +20,13 @@ tags:
   - compliance
   - scikit-learn
   - pytorch
+  - machine-learning
+  - mlops
+  - privacy
+  - gdpr
+  - responsible-ai
+  - xai
+  - tabular
 ---
 
 # 🔍 Traceprop
