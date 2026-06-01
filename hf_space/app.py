@@ -476,7 +476,7 @@ Traceprop is a **production-grade ML explainability library** that uniquely comb
 
 **Paper:** VLDB 2027 (under submission)
 
-**Author:** Amit Nautiyal — Independent Researcher
+**Author:** Amit — Independent Researcher
 """
 
 with gr.Blocks(title="Traceprop — Training Data Attribution & Provenance") as demo:
