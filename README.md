@@ -12,6 +12,33 @@ pip install traceprop
 [![Python](https://img.shields.io/pypi/pyversions/traceprop)](https://pypi.org/project/traceprop/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20035922.svg)](https://doi.org/10.5281/zenodo.20035922)
+[![HF Space](https://img.shields.io/badge/🤗%20HuggingFace-Live%20Demo-yellow)](https://huggingface.co/spaces/Nautiverse/traceprop-demo)
+
+---
+
+## 🤗 Live Demo
+
+Try Traceprop interactively — no install needed:
+
+**[huggingface.co/spaces/Nautiverse/traceprop-demo](https://huggingface.co/spaces/Nautiverse/traceprop-demo)**
+
+The demo covers all three core capabilities on the Wisconsin Breast Cancer dataset (CPU-only):
+
+| Tab | What it shows |
+|-----|--------------|
+| 🎯 Attribution | Pick any test sample — see top-K training points that drove the prediction, with influence scores in milliseconds |
+| 🗂️ Provenance | Adjust a multi-source preprocessing pipeline and watch the lineage graph update live |
+| 🧹 Unlearning | Choose a training sample to forget — see loss increase on that sample while test accuracy is preserved |
+
+### Run the demo locally
+
+```bash
+git clone https://github.com/AmitoVrito/Traceprop.git
+cd Traceprop/hf_space
+pip install -r requirements.txt
+python app.py
+# → opens at http://127.0.0.1:7860
+```
 
 ---
 
