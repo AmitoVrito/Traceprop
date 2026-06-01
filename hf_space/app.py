@@ -486,7 +486,7 @@ with gr.Blocks(title="Traceprop — Training Data Attribution & Provenance") as 
     with gr.Tabs():
 
         # ── Tab 1: Attribution ─────────────────────────────────────────────
-        with gr.TabItem("🎯 Attribution"):
+        with gr.Tab("🎯 Attribution"):
             gr.Markdown(ATTRIBUTION_INTRO)
             with gr.Row():
                 with gr.Column(scale=1, min_width=240):
@@ -522,7 +522,7 @@ with gr.Blocks(title="Traceprop — Training Data Attribution & Provenance") as 
             )
 
         # ── Tab 2: Provenance ──────────────────────────────────────────────
-        with gr.TabItem("🗂️ Provenance"):
+        with gr.Tab("🗂️ Provenance"):
             gr.Markdown(PROVENANCE_INTRO)
             with gr.Row():
                 with gr.Column(scale=1, min_width=240):
@@ -548,7 +548,7 @@ with gr.Blocks(title="Traceprop — Training Data Attribution & Provenance") as 
             )
 
         # ── Tab 3: Unlearning ──────────────────────────────────────────────
-        with gr.TabItem("🧹 Unlearning"):
+        with gr.Tab("🧹 Unlearning"):
             gr.Markdown(UNLEARNING_INTRO)
             with gr.Row():
                 with gr.Column(scale=1, min_width=240):
@@ -581,11 +581,11 @@ with gr.Blocks(title="Traceprop — Training Data Attribution & Provenance") as 
             )
 
         # ── Tab 4: Benchmarks & About ──────────────────────────────────────
-        with gr.TabItem("📊 Benchmarks & About"):
+        with gr.Tab("📊 Benchmarks & About"):
             gr.Markdown(BENCHMARKS_MD)
 
         # ── Tab 5: Feedback ────────────────────────────────────────────────
-        with gr.TabItem("💬 Feedback"):
+        with gr.Tab("💬 Feedback"):
             gr.Markdown(
                 "### Share Your Thoughts\n\n"
                 "Found a bug, have a feature request, or using Traceprop in a project? "
