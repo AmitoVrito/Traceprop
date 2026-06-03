@@ -1,0 +1,100 @@
+{
+  "experiment": "exp19_tuned_unlearning",
+  "description": "Step-count sweep [1..5] to show over-correction is tunable. Same forget sets and pipelines as exp15 (Adult Income) and exp16 (Covertype).",
+  "adult_income": {
+    "dataset": "Adult Income",
+    "n_train": 6000,
+    "forget_k": 50,
+    "C": 100.0,
+    "eta": 0.1,
+    "original_forget_loss": 3.2253,
+    "gold_forget_loss": 3.8581,
+    "gold_test_acc": 0.84,
+    "steps": [
+      {
+        "steps": 1,
+        "forget_loss": 3.4267,
+        "gap_closed_pct": 31.8,
+        "test_acc": 0.842
+      },
+      {
+        "steps": 2,
+        "forget_loss": 3.634,
+        "gap_closed_pct": 64.6,
+        "test_acc": 0.84
+      },
+      {
+        "steps": 3,
+        "forget_loss": 3.8463,
+        "gap_closed_pct": 98.1,
+        "test_acc": 0.844
+      },
+      {
+        "steps": 4,
+        "forget_loss": 4.0631,
+        "gap_closed_pct": 132.4,
+        "test_acc": 0.842
+      },
+      {
+        "steps": 5,
+        "forget_loss": 4.2835,
+        "gap_closed_pct": 167.2,
+        "test_acc": 0.842
+      }
+    ],
+    "best_step": {
+      "steps": 3,
+      "forget_loss": 3.8463,
+      "gap_closed_pct": 98.1,
+      "test_acc": 0.844
+    }
+  },
+  "covertype": {
+    "dataset": "Covertype",
+    "n_train": 50000,
+    "forget_k": 500,
+    "C": 100.0,
+    "eta": 0.05,
+    "original_forget_loss": 2.163,
+    "gold_forget_loss": 2.4018,
+    "gold_test_acc": 0.7596,
+    "steps": [
+      {
+        "steps": 1,
+        "forget_loss": 2.2624,
+        "gap_closed_pct": 41.6,
+        "test_acc": 0.7586
+      },
+      {
+        "steps": 2,
+        "forget_loss": 2.366,
+        "gap_closed_pct": 85.0,
+        "test_acc": 0.7574
+      },
+      {
+        "steps": 3,
+        "forget_loss": 2.4734,
+        "gap_closed_pct": 130.0,
+        "test_acc": 0.7532
+      },
+      {
+        "steps": 4,
+        "forget_loss": 2.5843,
+        "gap_closed_pct": 176.4,
+        "test_acc": 0.7516
+      },
+      {
+        "steps": 5,
+        "forget_loss": 2.6983,
+        "gap_closed_pct": 224.1,
+        "test_acc": 0.7494
+      }
+    ],
+    "best_step": {
+      "steps": 2,
+      "forget_loss": 2.366,
+      "gap_closed_pct": 85.0,
+      "test_acc": 0.7574
+    }
+  }
+}

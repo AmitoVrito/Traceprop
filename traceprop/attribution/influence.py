@@ -161,6 +161,125 @@ def compute_influence_scores_multi_checkpoint(
     return np.mean(all_scores, axis=0).astype(np.float32)
 
 
+def compute_source_stratified_scores(
+    test_gradient: np.ndarray,
+    train_store: "GradientStore",
+    lineage_graph: Optional[Any] = None,
+    use_trak: bool = True,
+    lambda_factor: float = 1e-3,
+    gram_factor: Optional[Any] = None,
+    normalize: bool = True,
+) -> dict:
+    """Aggregate per-sample influence scores to source-file level via the lineage graph.
+
+    Standard attribution answers: "which training sample influenced this prediction?"
+    This function answers: "which source file / pipeline stage influenced this prediction?"
+    by walking the lineage graph from each sample's source_node_id to the originating
+    source file and summing scores per source.
+
+    This is the key novelty over prior attribution systems (TRAK, LogIX, dattri):
+    none expose source-file-level influence; they treat training samples as opaque indices.
+
+    Args:
+        test_gradient:  Raw gradient vector for the test sample.
+        train_store:    GradientStore with per-sample projected gradients.
+        lineage_graph:  LineageGraph used during training. If None, falls back to
+                        grouping by source_id field in the GradientStore entries.
+        use_trak:       Use TRAK estimator (recommended). If False, uses dot product.
+        lambda_factor:  Regularisation for TRAK estimator.
+        gram_factor:    Pre-computed Cholesky factor; pass for efficiency when
+                        attributing many test samples.
+        normalize:      L-inf normalise the final per-source scores.
+
+    Returns:
+        dict with keys:
+          'per_sample_scores'  np.ndarray (n_train,)  — raw per-sample scores
+          'per_source'         dict[str, dict]         — aggregated per source file:
+                                 'total_influence', 'mean_influence',
+                                 'n_samples', 'sample_indices'
+          'source_ranking'     list[str]               — sources ranked by |mean_influence|
+    """
+    if use_trak:
+        per_sample = compute_trak_scores(
+            test_gradient, train_store,
+            lambda_factor=lambda_factor,
+            gram_factor=gram_factor,
+            normalize=False,
+        )
+    else:
+        per_sample = compute_influence_scores(
+            test_gradient, train_store, normalize=False
+        )
+
+    if len(per_sample) == 0:
+        return {"per_sample_scores": per_sample, "per_source": {}, "source_ranking": []}
+
+    sorted_entries = sorted(
+        train_store._entries.values(), key=lambda e: e.sample_index
+    )
+
+    per_source: dict[str, dict] = {}
+    for idx, entry in enumerate(sorted_entries):
+        # Resolve source key: walk lineage graph if available, else use source_id
+        source_key = _resolve_source_key(entry, lineage_graph)
+
+        if source_key not in per_source:
+            per_source[source_key] = {
+                "total_influence": 0.0,
+                "n_samples": 0,
+                "sample_indices": [],
+                "_scores": [],
+            }
+        s = float(per_sample[idx]) if idx < len(per_sample) else 0.0
+        per_source[source_key]["total_influence"] += s
+        per_source[source_key]["n_samples"] += 1
+        per_source[source_key]["sample_indices"].append(entry.sample_index)
+        per_source[source_key]["_scores"].append(s)
+
+    # Compute mean and clean up
+    for key, val in per_source.items():
+        scores_arr = np.array(val["_scores"])
+        val["mean_influence"] = float(scores_arr.mean())
+        val["std_influence"] = float(scores_arr.std())
+        del val["_scores"]
+
+    if normalize:
+        max_abs = max(abs(v["mean_influence"]) for v in per_source.values()) if per_source else 1.0
+        if max_abs > 1e-10:
+            for val in per_source.values():
+                val["mean_influence"] /= max_abs
+                val["total_influence"] /= max_abs
+
+    source_ranking = sorted(
+        per_source.keys(),
+        key=lambda k: abs(per_source[k]["mean_influence"]),
+        reverse=True,
+    )
+
+    return {
+        "per_sample_scores": per_sample,
+        "per_source": per_source,
+        "source_ranking": source_ranking,
+    }
+
+
+def _resolve_source_key(entry: Any, lineage_graph: Optional[Any]) -> str:
+    """Walk the lineage graph to find the originating source file for an entry."""
+    if lineage_graph is not None and entry.source_node_id is not None:
+        try:
+            sources = lineage_graph.sources(entry.source_node_id)
+            if sources:
+                # Use the source_file of the first (deepest) ancestor
+                src = sources[0]
+                file_key = src.get("file") or src.get("source_file")
+                if file_key:
+                    return file_key
+        except Exception:
+            pass
+    # Fall back to source_id label stored at log time
+    return str(entry.source_id) if entry.source_id is not None else "unknown"
+
+
 def top_k_influential(
     scores: np.ndarray,
     train_store: GradientStore,

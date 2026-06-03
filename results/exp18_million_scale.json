@@ -1,0 +1,15 @@
+{
+  "experiment": "exp18_million_scale",
+  "config": {
+    "N_TRAIN": 1000000,
+    "D_FEAT": 20,
+    "PROJ_DIM": 512,
+    "SEED": 42
+  },
+  "data_generation_s": 0.3871,
+  "gradient_computation_s": 0.0836,
+  "gradientstore_build_s": 2.663,
+  "attribution_score_ms": 98.832,
+  "memory_phi_gb": 2.048,
+  "topk_retrieval_ms": 139.326
+}

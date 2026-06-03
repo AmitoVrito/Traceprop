@@ -1,0 +1,29 @@
+{
+  "experiment": "exp16_covertype_unlearning",
+  "dataset": "covertype",
+  "n_train": 50000,
+  "n_test": 5000,
+  "forget_k": 500,
+  "C": 100.0,
+  "eta": 0.05,
+  "n_steps": 5,
+  "original": {
+    "forget_loss": 2.163,
+    "test_acc": 0.76
+  },
+  "gold": {
+    "forget_loss": 2.4018,
+    "test_acc": 0.7596
+  },
+  "traceprop": {
+    "forget_loss": 2.6983,
+    "test_acc": 0.7494,
+    "gap_closed_pct": 224.1,
+    "time_s": 0.002
+  },
+  "random": {
+    "forget_loss": 2.1619,
+    "test_acc": 0.7578,
+    "gap_closed_pct": -0.4
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "experiment": "exp17_source_stratified_eval",
+  "n_train": 19850,
+  "n_test": 100,
+  "d_feat": 10,
+  "proj_dim": 512,
+  "source_counts": {
+    "bureau": 4974,
+    "application": 7969,
+    "previous_application": 6907
+  },
+  "model_accuracy": 0.63,
+  "mean_influence_by_source": {
+    "bureau": 0.2572,
+    "application": -0.048,
+    "previous_application": -0.1303
+  },
+  "std_influence_by_source": {
+    "bureau": 0.9636,
+    "application": 0.2255,
+    "previous_application": 0.5355
+  },
+  "bureau_precision_at_1": 0.97,
+  "full_ranking_consistency": 0.59,
+  "cross_prediction_consistency_rho": 0.118,
+  "latency_ms_per_query": 116.08
+}

@@ -1,0 +1,33 @@
+{
+  "experiment": "exp20_provenance_comparison",
+  "dataset": "adult_income",
+  "n_train": 6000,
+  "baseline_transform_ms": 33.74,
+  "traceprop_transform_ms": 34.03,
+  "overhead_ratio": 1.0086,
+  "gradient_store_build_s": 0.199,
+  "attribution_query_ms": 64.58,
+  "mlinspect_note": "mlinspect==0.1.x requires scikit-learn==0.23.2; incompatible with Python 3.11+. Comparison based on published design: mlinspect tracks column-level lineage for sklearn ops, does not preserve row identity after ColumnTransformer (Grafberger et al., SIGMOD 2021, Fig. 3).",
+  "query_capabilities": {
+    "Q1_row_identity_after_transform": {
+      "mlinspect": false,
+      "trak": false,
+      "traceprop": true
+    },
+    "Q2_top_k_influential_sample": {
+      "mlinspect": false,
+      "trak": true,
+      "traceprop": true
+    },
+    "Q3_source_file_row_resolution": {
+      "mlinspect": false,
+      "trak": false,
+      "traceprop": true
+    },
+    "Q4_predicate_guided_forget_set": {
+      "mlinspect": false,
+      "trak": false,
+      "traceprop": true
+    }
+  }
+}
