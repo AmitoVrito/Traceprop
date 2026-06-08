@@ -52,6 +52,7 @@ A single Traceprop query answers:
 |---|---|
 | **Lineage tracking** | Sub-1% overhead in op-mode; tracks every NumPy, PyTorch, and JAX operation |
 | **Attribution** | LDS 0.976 on Covertype 50K, 0.884 on Adult Income — at 0.22–5.2 s CPU, no GPU needed |
+| **Source-stratified attribution (SS)** | Aggregates per-sample scores to source-file level; 100% correct-source P@1 on realistic 3-table ETL schema; 0.89 ms/query |
 | **Approximate unlearning** | Provenance-guided gradient correction; closes >100% of the retrain-from-scratch gap on real data |
 | **Compliance reporting** | Structured JSON audit trail for EU AI Act Article 26 obligations |
 | **Data valuation** | KNN-Shapley values aggregated by source file and preprocessing op |
@@ -292,6 +293,24 @@ Sub-1% overhead at 10⁶+ array elements.
 | Adult Income (n=6K) | Random | 3.233 | 1.2% | — |
 
 Provenance-guided gradient correction closes >100% of the retrain-from-scratch gap on both synthetic and real data. Test accuracy is fully preserved (Adult Income: 0.842 vs. 0.840 original).
+
+### Source-stratified attribution (SS)
+
+Traceprop-SS answers "which source *file* drove this prediction?" by aggregating per-sample TRAK scores to source-file level via the lineage graph. No prior attribution system (TRAK, LogIX, dattri) exposes source-file-level influence.
+
+**Controlled synthetic validation** (exp17b — known ground truth, injected signal)
+
+| Schema | Bureau P@1 | Latency | Speedup vs loop |
+|---|---|---|---|
+| 3-source (bureau / application / prev\_app, n=19,850) | **0.970** | 0.89 ms/query | 92× |
+
+**Realistic ETL validation** (exp21 — Home Credit schema, domain-motivated labels, no injected signal)
+
+| Schema | Correct-source P@1 | Baseline | Latency |
+|---|---|---|---|
+| 3-table (bureau / prev\_app / application, n=9,800) | **1.000** | 0.333 | 0.07 ms/query |
+
+Disjoint feature columns per source table (bureau: count/overdue\_rate/log\_amount; prev\_app: count/approval\_rate/log\_amount; application: employment/region) produce orthogonal gradient subspaces. Traceprop-SS exploits this structure without any knowledge of which columns belong to which table.
 
 ---
 
