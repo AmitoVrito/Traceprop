@@ -1,0 +1,16 @@
+{
+  "experiment": "exp18_million_scale_linux",
+  "platform": "Linux (Hetzner, Intel x86_64, Ubuntu 24.04)",
+  "note": "Hetzner server run. macOS equivalent in exp18_million_scale.json (build faster on macOS due to Apple Accelerate BLAS; query/retrieval faster on Hetzner due to larger RAM bandwidth).",
+  "config": {
+    "N_TRAIN": 1000000,
+    "D_FEAT": 20,
+    "PROJ_DIM": 512,
+    "SEED": 42
+  },
+  "gradientstore_build_s": 4.28,
+  "attribution_score_ms": 26.9,
+  "topk_retrieval_ms": 74.9,
+  "memory_phi_gb": 2.05,
+  "memory_note": "GiB (1 GiB = 2^30 bytes); value 2.05 GiB = 10^6 * 512 * 4 bytes"
+}

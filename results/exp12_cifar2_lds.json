@@ -1,0 +1,33 @@
+{
+  "experiment": "exp12_cifar2_lds",
+  "platform": "Google Colab (GPU T4)",
+  "notebook": "notebooks/cifar2_resnet9_lds_colab.ipynb",
+  "dataset": "CIFAR-2 (airplane vs automobile)",
+  "model": "ResNet-9 (end-to-end, with BatchNorm)",
+  "n_train": 10000,
+  "n_subsets": 500,
+  "results": {
+    "trak_5ckpts": {
+      "lds_mean": 0.0290,
+      "lds_std": 0.0523,
+      "wall_clock_s": 691
+    },
+    "traceprop_ll": {
+      "lds_mean": 0.0168,
+      "lds_std": 0.0684,
+      "wall_clock_s": 2.6,
+      "hardware": "CPU"
+    },
+    "traceprop_bm": {
+      "lds_mean": 0.0033,
+      "lds_std": 0.0334,
+      "wall_clock_s": 14.2,
+      "hardware": "CPU"
+    },
+    "random": {
+      "lds_mean": 0.0205,
+      "lds_std": 0.0357
+    }
+  },
+  "note": "Traceprop-LL scores near random due to BatchNorm corrupting per-sample gradients. TRAK uses gradient checkpoints averaged over 5 checkpoints on GPU. Speedup: 691s / 2.6s = 266x (Traceprop-LL CPU vs TRAK GPU)."
+}

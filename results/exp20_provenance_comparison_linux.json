@@ -1,0 +1,16 @@
+{
+  "experiment": "exp20_provenance_comparison_linux",
+  "platform": "Linux (Hetzner, Intel x86_64, Ubuntu 24.04)",
+  "note": "Hetzner server run. macOS equivalent in exp20_provenance_comparison.json shows 1.0086x overhead; Linux is 0.969x due to lower system-call overhead and faster cache warm-up on Linux.",
+  "dataset": "adult_income",
+  "n_train": 6000,
+  "baseline_transform_ms": 28.07,
+  "traceprop_transform_ms": 27.19,
+  "overhead_ratio": 0.969,
+  "query_capabilities": {
+    "Q1_row_identity_after_transform": {"mlinspect": false, "trak": false, "traceprop": true},
+    "Q2_top_k_influential_sample":     {"mlinspect": false, "trak": true,  "traceprop": true},
+    "Q3_source_file_row_resolution":   {"mlinspect": false, "trak": false, "traceprop": true},
+    "Q4_predicate_guided_forget_set":  {"mlinspect": false, "trak": false, "traceprop": true}
+  }
+}

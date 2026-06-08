@@ -1,0 +1,21 @@
+{
+  "experiment": "exp17b_ss_vectorized_linux",
+  "platform": "Linux (Hetzner, Intel x86_64, Ubuntu 24.04)",
+  "note": "Hetzner server run. Script failed after printing latency (ImportError on compute_source_stratified_scores not yet deployed to server). Latency captured from stdout before failure.",
+  "n_train": 19850,
+  "n_test": 100,
+  "d_feat": 10,
+  "proj_dim": 512,
+  "latency_ms_per_query_vectorized": 0.89,
+  "latency_ms_per_query_old_loop": 112.3,
+  "speedup_x": 92.4,
+  "source_counts": {
+    "bureau": 4974,
+    "application": 7969,
+    "previous_application": 6907
+  },
+  "bureau_precision_at_1": 0.97,
+  "full_ranking_consistency": 0.59,
+  "cross_prediction_consistency_rho": 0.118,
+  "model_accuracy": 0.63
+}
