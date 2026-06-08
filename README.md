@@ -291,8 +291,12 @@ Sub-1% overhead at 10⁶+ array elements.
 | Adult Income (n=6K) | Gold (retrain) | 3.858 | 100% | — |
 | Adult Income (n=6K) | Traceprop | 4.284 | **>100% (167%)** | **0.842** |
 | Adult Income (n=6K) | Random | 3.233 | 1.2% | — |
+| Covertype (n=50K) | Original | 2.163 | — | 0.760 |
+| Covertype (n=50K) | Gold (retrain) | 2.402 | 100% | — |
+| Covertype (n=50K) | Traceprop | 2.698 | **>100% (224%)** | **0.749** |
+| Covertype (n=50K) | Random | 2.162 | −0.4% | — |
 
-Provenance-guided gradient correction closes >100% of the retrain-from-scratch gap on both synthetic and real data. Test accuracy is fully preserved (Adult Income: 0.842 vs. 0.840 original).
+Provenance-guided gradient correction closes >100% of the retrain-from-scratch gap at both scales. Test accuracy is fully preserved (Adult Income: 0.842 vs. 0.840 original; Covertype: 0.749 vs. 0.760 original — 1.1 pp drop). Random-sample baseline closes near 0% at both scales.
 
 ### Source-stratified attribution (SS)
 
