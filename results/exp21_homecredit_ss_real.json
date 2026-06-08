@@ -1,0 +1,38 @@
+{
+  "experiment": "exp21_homecredit_ss_real",
+  "description": "Traceprop-SS on realistic 3-table ETL credit risk schema. Disjoint feature groups: bureau cols 0-2, prev cols 3-5, app cols 6-7. No injected signal; labels driven by per-source risk factors.",
+  "n_bur": 5000,
+  "n_prev": 3000,
+  "n_app": 2000,
+  "n_train": 9800,
+  "n_test": 200,
+  "d_feat": 8,
+  "source_counts_train": {
+    "bureau": 4911,
+    "previous_application": 2937,
+    "application": 1952
+  },
+  "model_accuracy": 0.735,
+  "mean_influence": {
+    "bureau": -0.0,
+    "previous_application": -0.0,
+    "application": -0.0
+  },
+  "std_influence": {
+    "bureau": 0.0,
+    "previous_application": 1e-06,
+    "application": 2e-06
+  },
+  "bureau_p1": 0.445,
+  "correct_source_p1": 1.0,
+  "correct_source_p1_baseline": 0.333,
+  "per_segment_p1": {
+    "bureau": 1.0,
+    "previous_application": 1.0,
+    "application": 1.0
+  },
+  "cross_prediction_rho": 0.024,
+  "latency_ms_per_query": 0.07,
+  "schema": "Realistic ETL joins: bureau rows -> count/overdue/amount aggregations; prev_app rows -> count/approval_rate/amount; application -> employment/region. Disjoint feature columns per table.",
+  "trak_space": "8-dim exact Gram solve (d_feat=8, no JL projection)"
+}
