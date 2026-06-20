@@ -1,0 +1,60 @@
+{
+  "shapes": [
+    {
+      "shape": "adult_linear",
+      "b": 32,
+      "m": 128,
+      "n": 128,
+      "k": 103,
+      "uncompressed_edges": 54001664,
+      "compressed_records": 4096,
+      "ratio": 13184.0,
+      "bytes_uncompressed_sqlite": 1296039936,
+      "bytes_compressed": 212909,
+      "byte_ratio": 6087.3,
+      "ancestors_us_per_call": 1.296
+    },
+    {
+      "shape": "small_attn",
+      "b": 32,
+      "m": 512,
+      "n": 768,
+      "k": 768,
+      "uncompressed_edges": 9663676416,
+      "compressed_records": 16384,
+      "ratio": 589824.0,
+      "bytes_uncompressed_sqlite": 231928233984,
+      "bytes_compressed": 917535,
+      "byte_ratio": 252773.2,
+      "ancestors_us_per_call": 1.271
+    },
+    {
+      "shape": "med_ffn",
+      "b": 16,
+      "m": 2048,
+      "n": 4096,
+      "k": 4096,
+      "uncompressed_edges": 549755813888,
+      "compressed_records": 32768,
+      "ratio": 16777216.0,
+      "bytes_uncompressed_sqlite": 13194139533312,
+      "bytes_compressed": 1835197,
+      "byte_ratio": 7189494.9,
+      "ancestors_us_per_call": 1.606
+    },
+    {
+      "shape": "llama_ffn",
+      "b": 8,
+      "m": 4096,
+      "n": 11008,
+      "k": 4096,
+      "uncompressed_edges": 1477468749824,
+      "compressed_records": 32768,
+      "ratio": 45088768.0,
+      "bytes_uncompressed_sqlite": 35459249995776,
+      "bytes_compressed": 1835197,
+      "byte_ratio": 19321767.6,
+      "ancestors_us_per_call": 1.586
+    }
+  ]
+}

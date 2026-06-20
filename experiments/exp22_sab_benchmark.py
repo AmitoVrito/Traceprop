@@ -465,7 +465,7 @@ def ss_attrib_block(X_tr, y_tr, src_tr, X_te, y_te, src_names, source_cols,
     20-seed paired t-test (+4.2 pp lift over gradmag). Override only for
     reproducing earlier 5-seed runs."""
     if K is None:
-        K = max(50, len(X_tr) // 20)
+        K = min(1000, max(50, len(X_tr) // 20))
     """Stronger SS hybrid: per source, score = block_mag * sum(|s_i| for i in
     top-K). Block magnitude says 'where the action is'; top-K influence sum
     says 'which source the model is leaning on for this prediction'. K is
