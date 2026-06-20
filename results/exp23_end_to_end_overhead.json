@@ -1,0 +1,16 @@
+{
+  "experiment": "exp23_end_to_end_overhead",
+  "workload": "Adult Income n=6000, logistic regression with manual minibatch SGD, 20 epochs, batch_size=64 \u2014 1880 small matmul ops per training run, representative of the small-op regime real training spends most time in",
+  "n_trials": 5,
+  "baseline_mean_s": 0.115,
+  "baseline_std_s": 0.005,
+  "traceprop_bm_mean_s": 0.214,
+  "traceprop_bm_std_s": 0.005,
+  "traceprop_bm_overhead_ratio_mean": 1.874,
+  "traceprop_bm_overhead_ratio_std": 0.139,
+  "traceprop_ll_mean_s": 5.189,
+  "traceprop_ll_std_s": 0.083,
+  "traceprop_ll_overhead_ratio_mean": 45.406,
+  "traceprop_ll_overhead_ratio_std": 2.556,
+  "note": "Real end-to-end overhead under two attribution configs. Traceprop-BM logs one batch-mean gradient per step (cheap, lower LDS quality). Traceprop-LL logs per-sample last-layer gradients (production attribution quality used for exp14b LDS=0.193, exp4c LDS=0.622). The BM ratio is what a production lineage-only deployment would see; the LL ratio is what a system providing per-sample attribution must pay in CPU."
+}

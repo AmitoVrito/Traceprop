@@ -1,0 +1,58 @@
+{
+  "home_credit": {
+    "n_seeds": 20,
+    "mean_diff_pp": 4.23,
+    "wins": 15,
+    "t_test_t": 2.9749,
+    "t_test_p": 0.007781,
+    "wilcoxon_W": 34.0,
+    "wilcoxon_p": 0.00639,
+    "bootstrap_95_ci_pp": [
+      1.66,
+      7.13
+    ],
+    "n_bootstrap_iters": 10000
+  },
+  "compas": {
+    "n_seeds": 20,
+    "mean_diff_pp": 16.39,
+    "wins": 20,
+    "t_test_t": 5.6779,
+    "t_test_p": 1.8e-05,
+    "wilcoxon_W": 0.0,
+    "wilcoxon_p": 2e-06,
+    "bootstrap_95_ci_pp": [
+      10.97,
+      22.04
+    ],
+    "n_bootstrap_iters": 10000
+  },
+  "lending_club": {
+    "n_seeds": 20,
+    "mean_diff_pp": 5.02,
+    "wins": 20,
+    "t_test_t": 14.335,
+    "t_test_p": 0.0,
+    "wilcoxon_W": 0.0,
+    "wilcoxon_p": 2e-06,
+    "bootstrap_95_ci_pp": [
+      4.35,
+      5.7
+    ],
+    "n_bootstrap_iters": 10000
+  },
+  "bank_marketing": {
+    "n_seeds": 20,
+    "mean_diff_pp": -2.2,
+    "wins": 6,
+    "t_test_t": -2.2825,
+    "t_test_p": 0.034152,
+    "wilcoxon_W": 56.0,
+    "wilcoxon_p": 0.06958,
+    "bootstrap_95_ci_pp": [
+      -4.04,
+      -0.34
+    ],
+    "n_bootstrap_iters": 10000
+  }
+}
