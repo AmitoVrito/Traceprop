@@ -62,6 +62,16 @@ class RandomProjection:
             )
         return self._matrix @ flat
 
+    def project_batch(self, gradients: np.ndarray) -> np.ndarray:
+        """Project an (n, input_dim) batch in a single BLAS matmul."""
+        g = gradients.astype(np.float32, copy=False)
+        if g.ndim != 2 or g.shape[1] != self.input_dim:
+            raise ValueError(
+                f"Expected ({-1}, {self.input_dim}); got {g.shape}"
+            )
+        # (n, p) @ (p, k) -> (n, k)
+        return g @ self._matrix.T
+
 
 class GradientStore:
     """In-memory store of compressed per-sample gradient logs."""
@@ -103,6 +113,50 @@ class GradientStore:
         )
         self._entries[entry.id] = entry
         return entry.id
+
+    def log_batch(
+        self,
+        gradients: np.ndarray,
+        source_id: Optional[str] = None,
+        sample_index_offset: int = 0,
+        source_node_ids: Optional[list] = None,
+    ) -> list[str]:
+        """Vectorised batched gradient logging.
+
+        Accepts an (n, p) array of per-sample gradients and projects them
+        in a single BLAS matmul, then stores each row as a GradientLogEntry.
+        Avoids the per-sample Python interpreter dispatch that dominates
+        log_gradient() in tight training loops.
+        """
+        if gradients.ndim == 1:
+            gradients = gradients[None, :]
+        n, p = gradients.shape
+
+        if self._projection is None:
+            self._projection = RandomProjection(
+                input_dim=p,
+                proj_dim=self._proj_dim,
+                seed=self._seed,
+            )
+
+        # One matmul for the whole batch (sparse JL projection).
+        proj = self._projection.project_batch(gradients) \
+            if hasattr(self._projection, "project_batch") \
+            else np.stack([self._projection.project(g) for g in gradients])
+
+        ids = []
+        for i in range(n):
+            entry = GradientLogEntry(
+                proj_gradient=proj[i],
+                source_node_id=(source_node_ids[i] if source_node_ids else None),
+                source_id=source_id,
+                sample_index=sample_index_offset + i,
+                loss_value=0.0,
+                metadata={},
+            )
+            self._entries[entry.id] = entry
+            ids.append(entry.id)
+        return ids
 
     def get_projected_matrix(self) -> np.ndarray:
         """Build the full (n_samples, proj_dim) gradient matrix for influence computation."""

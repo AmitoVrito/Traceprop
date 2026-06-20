@@ -87,6 +87,34 @@ def train_traceprop_batch():
     return time.perf_counter() - t0
 
 
+def train_traceprop_persample_batched():
+    """Per-sample last-layer gradients logged via the vectorised
+    log_batch() API — same attribution semantics as Traceprop-LL but the
+    Python per-sample loop is replaced by a single BLAS matmul + array
+    assignment per step."""
+    w = np.zeros(D, dtype=np.float32); b_ = np.float32(0.0)
+    store = GradientStore(proj_dim=512, seed=42)
+    lr = 0.01
+    sample_idx_counter = 0
+    t0 = time.perf_counter()
+    for _ in range(N_EPOCHS):
+        perm = np.random.permutation(N)
+        for i in range(0, N, BATCH):
+            idx = perm[i:i+BATCH]
+            xb, yb = X[idx], y[idx]
+            p = sigmoid(xb @ w + b_)
+            err = p - yb
+            g = (err[:, None] * xb).mean(axis=0)
+            gb = err.mean()
+            w  -= lr * g; b_ -= lr * gb
+            # Vectorised: one (batch_size, D) array, one BLAS matmul.
+            per_sample_grads = (err[:, None] * xb).astype(np.float32)
+            store.log_batch(per_sample_grads, source_id="adult",
+                            sample_index_offset=sample_idx_counter)
+            sample_idx_counter += len(idx)
+    return time.perf_counter() - t0
+
+
 def train_traceprop_persample():
     """Per-sample last-layer gradients logged into a GradientStore — the
     Traceprop-LL production attribution config used for exp14b LDS=0.193.
@@ -116,14 +144,17 @@ def train_traceprop_persample():
 
 print(f"\nRunning {N_TRIALS} trials each ({N_EPOCHS} epochs, batch={BATCH}, "
       f"94 steps/epoch, {N_EPOCHS*94} ops/run)...")
-baseline_times, bm_times, ll_times = [], [], []
+baseline_times, bm_times, ll_times, llb_times = [], [], [], []
 for trial in range(N_TRIALS):
     bt = train_baseline()
     bm = train_traceprop_batch()
+    llb = train_traceprop_persample_batched()
     ll = train_traceprop_persample()
-    baseline_times.append(bt); bm_times.append(bm); ll_times.append(ll)
+    baseline_times.append(bt); bm_times.append(bm)
+    ll_times.append(ll); llb_times.append(llb)
     print(f"  trial {trial+1}: baseline={bt:.2f}s  TP-BM={bm:.2f}s ({bm/bt:.2f}x)  "
-          f"TP-LL={ll:.2f}s ({ll/bt:.2f}x)")
+          f"TP-LL-batched={llb:.2f}s ({llb/bt:.2f}x)  "
+          f"TP-LL-naive={ll:.2f}s ({ll/bt:.2f}x)")
 
 # Replace single traceprop ratio with split BM/LL ratios
 traceprop_times = ll_times    # keep LL for backward compat in summary
@@ -132,17 +163,21 @@ def stats(times):
     return float(np.mean(times)), float(np.std(times))
 b_mean, b_std = stats(baseline_times)
 bm_mean, bm_std = stats(bm_times)
+llb_mean, llb_std = stats(llb_times)
 ll_mean, ll_std = stats(ll_times)
-bm_ratios = [t/b for t, b in zip(bm_times, baseline_times)]
-ll_ratios = [t/b for t, b in zip(ll_times, baseline_times)]
+bm_ratios  = [t/b for t, b in zip(bm_times,  baseline_times)]
+llb_ratios = [t/b for t, b in zip(llb_times, baseline_times)]
+ll_ratios  = [t/b for t, b in zip(ll_times,  baseline_times)]
 
 print()
 print("=" * 78)
 print(f"End-to-end training overhead (Adult Income, manual minibatch SGD)")
-print(f"  baseline       : {b_mean:.3f} ± {b_std:.3f} s")
-print(f"  Traceprop-BM   : {bm_mean:.3f} ± {bm_std:.3f} s  "
+print(f"  baseline              : {b_mean:.3f} ± {b_std:.3f} s")
+print(f"  Traceprop-BM          : {bm_mean:.3f} ± {bm_std:.3f} s  "
       f"({np.mean(bm_ratios):.2f}x ± {np.std(bm_ratios):.2f})")
-print(f"  Traceprop-LL   : {ll_mean:.3f} ± {ll_std:.3f} s  "
+print(f"  Traceprop-LL (batched): {llb_mean:.3f} ± {llb_std:.3f} s  "
+      f"({np.mean(llb_ratios):.2f}x ± {np.std(llb_ratios):.2f})")
+print(f"  Traceprop-LL (naive)  : {ll_mean:.3f} ± {ll_std:.3f} s  "
       f"({np.mean(ll_ratios):.2f}x ± {np.std(ll_ratios):.2f})")
 print("=" * 78)
 
@@ -159,10 +194,14 @@ out = {
     "traceprop_bm_std_s":  round(bm_std,  3),
     "traceprop_bm_overhead_ratio_mean": round(float(np.mean(bm_ratios)), 3),
     "traceprop_bm_overhead_ratio_std":  round(float(np.std(bm_ratios)),  3),
-    "traceprop_ll_mean_s": round(ll_mean, 3),
-    "traceprop_ll_std_s":  round(ll_std,  3),
-    "traceprop_ll_overhead_ratio_mean": round(float(np.mean(ll_ratios)), 3),
-    "traceprop_ll_overhead_ratio_std":  round(float(np.std(ll_ratios)),  3),
+    "traceprop_ll_batched_mean_s": round(llb_mean, 3),
+    "traceprop_ll_batched_std_s":  round(llb_std,  3),
+    "traceprop_ll_batched_overhead_ratio_mean": round(float(np.mean(llb_ratios)), 3),
+    "traceprop_ll_batched_overhead_ratio_std":  round(float(np.std(llb_ratios)),  3),
+    "traceprop_ll_naive_mean_s": round(ll_mean, 3),
+    "traceprop_ll_naive_std_s":  round(ll_std,  3),
+    "traceprop_ll_naive_overhead_ratio_mean": round(float(np.mean(ll_ratios)), 3),
+    "traceprop_ll_naive_overhead_ratio_std":  round(float(np.std(ll_ratios)),  3),
     "note": ("Real end-to-end overhead under two attribution configs. "
              "Traceprop-BM logs one batch-mean gradient per step "
              "(cheap, lower LDS quality). Traceprop-LL logs per-sample "
