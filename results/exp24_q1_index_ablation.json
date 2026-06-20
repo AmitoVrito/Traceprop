@@ -1,0 +1,166 @@
+{
+  "experiment": "exp24_q1_index_ablation",
+  "n_grad": 100000,
+  "n_nodes": 100000,
+  "n_sources": 20,
+  "n_trials": 30,
+  "configs": {
+    "cfg0_no_indexes": {
+      "indexes": {
+        "gs.source_node_id": false,
+        "ln.source_file": false
+      },
+      "latency_ms_mean": 138.47,
+      "latency_ms_std": 4.568,
+      "latency_ms_min": 126.31,
+      "n_trials": 30,
+      "query_plan": [
+        [
+          9,
+          0,
+          182,
+          "SCAN gs"
+        ],
+        [
+          14,
+          0,
+          43,
+          "SEARCH ln USING INTEGER PRIMARY KEY (rowid=?)"
+        ],
+        [
+          19,
+          0,
+          0,
+          "USE TEMP B-TREE FOR GROUP BY"
+        ],
+        [
+          63,
+          0,
+          0,
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      ],
+      "result_top1": [
+        "source_8.csv",
+        97.3032667464025
+      ]
+    },
+    "cfg1_join_idx": {
+      "indexes": {
+        "gs.source_node_id": true,
+        "ln.source_file": false
+      },
+      "latency_ms_mean": 139.876,
+      "latency_ms_std": 4.059,
+      "latency_ms_min": 131.382,
+      "n_trials": 30,
+      "query_plan": [
+        [
+          9,
+          0,
+          180,
+          "SCAN gs"
+        ],
+        [
+          14,
+          0,
+          43,
+          "SEARCH ln USING INTEGER PRIMARY KEY (rowid=?)"
+        ],
+        [
+          19,
+          0,
+          0,
+          "USE TEMP B-TREE FOR GROUP BY"
+        ],
+        [
+          63,
+          0,
+          0,
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      ],
+      "result_top1": [
+        "source_8.csv",
+        97.3032667464025
+      ]
+    },
+    "cfg2_source_idx": {
+      "indexes": {
+        "gs.source_node_id": false,
+        "ln.source_file": true
+      },
+      "latency_ms_mean": 140.321,
+      "latency_ms_std": 7.264,
+      "latency_ms_min": 124.914,
+      "n_trials": 30,
+      "query_plan": [
+        [
+          9,
+          0,
+          182,
+          "SCAN gs"
+        ],
+        [
+          14,
+          0,
+          43,
+          "SEARCH ln USING INTEGER PRIMARY KEY (rowid=?)"
+        ],
+        [
+          19,
+          0,
+          0,
+          "USE TEMP B-TREE FOR GROUP BY"
+        ],
+        [
+          63,
+          0,
+          0,
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      ],
+      "result_top1": [
+        "source_8.csv",
+        97.3032667464025
+      ]
+    },
+    "cfg3_both_idx": {
+      "indexes": {
+        "gs.source_node_id": true,
+        "ln.source_file": true
+      },
+      "latency_ms_mean": 119.923,
+      "latency_ms_std": 2.859,
+      "latency_ms_min": 114.672,
+      "n_trials": 30,
+      "query_plan": [
+        [
+          10,
+          0,
+          178,
+          "SEARCH ln USING COVERING INDEX idx_ln_source_file (source_file>?)"
+        ],
+        [
+          14,
+          0,
+          48,
+          "SEARCH gs USING INDEX idx_gs_source_node_id (source_node_id=?)"
+        ],
+        [
+          57,
+          0,
+          0,
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      ],
+      "result_top1": [
+        "source_8.csv",
+        97.3032667464025
+      ]
+    }
+  },
+  "best_config": "cfg3_both_idx",
+  "worst_config": "cfg2_source_idx",
+  "best_over_worst_speedup": 1.17
+}

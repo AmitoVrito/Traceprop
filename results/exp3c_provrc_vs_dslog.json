@@ -1,0 +1,60 @@
+{
+  "shapes": [
+    {
+      "shape": "adult_linear",
+      "b": 32,
+      "m": 128,
+      "n": 128,
+      "k": 103,
+      "uncompressed_edges": 54001664,
+      "bytes_uncompressed_triples": 1296039936,
+      "bytes_dslog_packed": 432013312,
+      "provrc_records": 4096,
+      "bytes_provrc": 229376,
+      "provrc_vs_dslog_ratio": 1883.4,
+      "provrc_vs_uncompressed": 5650.3
+    },
+    {
+      "shape": "small_attn",
+      "b": 32,
+      "m": 512,
+      "n": 768,
+      "k": 768,
+      "uncompressed_edges": 9663676416,
+      "bytes_uncompressed_triples": 231928233984,
+      "bytes_dslog_packed": 77309411328,
+      "provrc_records": 16384,
+      "bytes_provrc": 917504,
+      "provrc_vs_dslog_ratio": 84260.6,
+      "provrc_vs_uncompressed": 252781.7
+    },
+    {
+      "shape": "med_ffn",
+      "b": 16,
+      "m": 2048,
+      "n": 4096,
+      "k": 4096,
+      "uncompressed_edges": 549755813888,
+      "bytes_uncompressed_triples": 13194139533312,
+      "bytes_dslog_packed": 4398046511104,
+      "provrc_records": 32768,
+      "bytes_provrc": 1835008,
+      "provrc_vs_dslog_ratio": 2396745.1,
+      "provrc_vs_uncompressed": 7190235.4
+    },
+    {
+      "shape": "llama_ffn",
+      "b": 8,
+      "m": 4096,
+      "n": 11008,
+      "k": 4096,
+      "uncompressed_edges": 1477468749824,
+      "bytes_uncompressed_triples": 35459249995776,
+      "bytes_dslog_packed": 11819749998592,
+      "provrc_records": 32768,
+      "bytes_provrc": 1835008,
+      "provrc_vs_dslog_ratio": 6441252.6,
+      "provrc_vs_uncompressed": 19323757.7
+    }
+  ]
+}
