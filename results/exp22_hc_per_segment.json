@@ -1,0 +1,14 @@
+{
+  "application": {
+    "gmag_mean_p1": 0.7660047713867939,
+    "ss_mean_p1": 0.7673254333725387
+  },
+  "previous_application": {
+    "gmag_mean_p1": 0.3101105920597104,
+    "ss_mean_p1": 0.2836051552021063
+  },
+  "bureau": {
+    "gmag_mean_p1": 0.496547619047619,
+    "ss_mean_p1": 0.6486904761904762
+  }
+}

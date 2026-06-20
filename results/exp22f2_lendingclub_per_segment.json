@@ -1,0 +1,14 @@
+{
+  "borrower": {
+    "gmag_mean_p1": 0.818677539580694,
+    "ss_mean_p1": 0.8107148723139341
+  },
+  "credit_hist": {
+    "gmag_mean_p1": 1.0,
+    "ss_mean_p1": 1.0
+  },
+  "loan_terms": {
+    "gmag_mean_p1": 0.11676338208654984,
+    "ss_mean_p1": 0.2650586427334642
+  }
+}
