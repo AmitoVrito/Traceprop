@@ -1,0 +1,313 @@
+{
+  "experiment": "exp24b_q1_cost_model",
+  "train_grid": [
+    [
+      10000,
+      10000,
+      5
+    ],
+    [
+      10000,
+      10000,
+      20
+    ],
+    [
+      10000,
+      100000,
+      20
+    ],
+    [
+      50000,
+      50000,
+      20
+    ],
+    [
+      50000,
+      100000,
+      20
+    ],
+    [
+      100000,
+      10000,
+      20
+    ],
+    [
+      100000,
+      100000,
+      5
+    ],
+    [
+      100000,
+      100000,
+      20
+    ],
+    [
+      100000,
+      100000,
+      100
+    ],
+    [
+      500000,
+      100000,
+      20
+    ]
+  ],
+  "heldout_grid": [
+    [
+      1000000,
+      100000,
+      20
+    ],
+    [
+      1000000,
+      500000,
+      20
+    ],
+    [
+      250000,
+      250000,
+      50
+    ]
+  ],
+  "n_trials_per_cfg": 10,
+  "train_measurements": [
+    {
+      "plan": "P_0",
+      "n_grad": 10000,
+      "n_nodes": 10000,
+      "n_sources": 5,
+      "latency_ms": 6.051
+    },
+    {
+      "plan": "P_2",
+      "n_grad": 10000,
+      "n_nodes": 10000,
+      "n_sources": 5,
+      "latency_ms": 5.812
+    },
+    {
+      "plan": "P_0",
+      "n_grad": 10000,
+      "n_nodes": 10000,
+      "n_sources": 20,
+      "latency_ms": 6.423
+    },
+    {
+      "plan": "P_2",
+      "n_grad": 10000,
+      "n_nodes": 10000,
+      "n_sources": 20,
+      "latency_ms": 6.386
+    },
+    {
+      "plan": "P_0",
+      "n_grad": 10000,
+      "n_nodes": 100000,
+      "n_sources": 20,
+      "latency_ms": 14.527
+    },
+    {
+      "plan": "P_2",
+      "n_grad": 10000,
+      "n_nodes": 100000,
+      "n_sources": 20,
+      "latency_ms": 13.576
+    },
+    {
+      "plan": "P_0",
+      "n_grad": 50000,
+      "n_nodes": 50000,
+      "n_sources": 20,
+      "latency_ms": 52.23
+    },
+    {
+      "plan": "P_2",
+      "n_grad": 50000,
+      "n_nodes": 50000,
+      "n_sources": 20,
+      "latency_ms": 51.232
+    },
+    {
+      "plan": "P_0",
+      "n_grad": 50000,
+      "n_nodes": 100000,
+      "n_sources": 20,
+      "latency_ms": 63.24
+    },
+    {
+      "plan": "P_2",
+      "n_grad": 50000,
+      "n_nodes": 100000,
+      "n_sources": 20,
+      "latency_ms": 47.323
+    },
+    {
+      "plan": "P_0",
+      "n_grad": 100000,
+      "n_nodes": 10000,
+      "n_sources": 20,
+      "latency_ms": 86.041
+    },
+    {
+      "plan": "P_2",
+      "n_grad": 100000,
+      "n_nodes": 10000,
+      "n_sources": 20,
+      "latency_ms": 81.612
+    },
+    {
+      "plan": "P_0",
+      "n_grad": 100000,
+      "n_nodes": 100000,
+      "n_sources": 5,
+      "latency_ms": 121.985
+    },
+    {
+      "plan": "P_2",
+      "n_grad": 100000,
+      "n_nodes": 100000,
+      "n_sources": 5,
+      "latency_ms": 99.884
+    },
+    {
+      "plan": "P_0",
+      "n_grad": 100000,
+      "n_nodes": 100000,
+      "n_sources": 20,
+      "latency_ms": 127.942
+    },
+    {
+      "plan": "P_2",
+      "n_grad": 100000,
+      "n_nodes": 100000,
+      "n_sources": 20,
+      "latency_ms": 130.109
+    },
+    {
+      "plan": "P_0",
+      "n_grad": 100000,
+      "n_nodes": 100000,
+      "n_sources": 100,
+      "latency_ms": 133.439
+    },
+    {
+      "plan": "P_2",
+      "n_grad": 100000,
+      "n_nodes": 100000,
+      "n_sources": 100,
+      "latency_ms": 192.415
+    },
+    {
+      "plan": "P_0",
+      "n_grad": 500000,
+      "n_nodes": 100000,
+      "n_sources": 20,
+      "latency_ms": 674.934
+    },
+    {
+      "plan": "P_2",
+      "n_grad": 500000,
+      "n_nodes": 100000,
+      "n_sources": 20,
+      "latency_ms": 1053.37
+    }
+  ],
+  "p0_fit": {
+    "A": -11.716697161883591,
+    "B_per_G": 0.0013630863802124617,
+    "rmse_ms": 13.671,
+    "n_points": 10
+  },
+  "p2_fit": {
+    "A": -55.71799234418781,
+    "B_per_L": 2.1168764949203015e-05,
+    "C_per_G": 0.002159712779880018,
+    "rmse_ms": 42.584,
+    "n_points": 10
+  },
+  "heldout_measurements": [
+    {
+      "plan": "P_0",
+      "n_grad": 1000000,
+      "n_nodes": 100000,
+      "n_sources": 20,
+      "latency_ms": 1389.045
+    },
+    {
+      "plan": "P_2",
+      "n_grad": 1000000,
+      "n_nodes": 100000,
+      "n_sources": 20,
+      "latency_ms": 2303.961
+    },
+    {
+      "plan": "P_0",
+      "n_grad": 1000000,
+      "n_nodes": 500000,
+      "n_sources": 20,
+      "latency_ms": 2440.956
+    },
+    {
+      "plan": "P_2",
+      "n_grad": 1000000,
+      "n_nodes": 500000,
+      "n_sources": 20,
+      "latency_ms": 2544.31
+    },
+    {
+      "plan": "P_0",
+      "n_grad": 250000,
+      "n_nodes": 250000,
+      "n_sources": 50,
+      "latency_ms": 542.39
+    },
+    {
+      "plan": "P_2",
+      "n_grad": 250000,
+      "n_nodes": 250000,
+      "n_sources": 50,
+      "latency_ms": 680.757
+    }
+  ],
+  "heldout_prediction_eval": [
+    {
+      "n_grad": 1000000,
+      "n_nodes": 100000,
+      "n_sources": 20,
+      "P_0_measured_ms": 1389.045,
+      "P_0_predicted_ms": 1351.37,
+      "P_0_abs_error_pct": 2.71,
+      "P_2_measured_ms": 2303.961,
+      "P_2_predicted_ms": 2106.11,
+      "P_2_abs_error_pct": 8.59,
+      "measured_speedup": 0.6,
+      "predicted_speedup": 0.64
+    },
+    {
+      "n_grad": 1000000,
+      "n_nodes": 500000,
+      "n_sources": 20,
+      "P_0_measured_ms": 2440.956,
+      "P_0_predicted_ms": 1351.37,
+      "P_0_abs_error_pct": 44.64,
+      "P_2_measured_ms": 2544.31,
+      "P_2_predicted_ms": 2114.58,
+      "P_2_abs_error_pct": 16.89,
+      "measured_speedup": 0.96,
+      "predicted_speedup": 0.64
+    },
+    {
+      "n_grad": 250000,
+      "n_nodes": 250000,
+      "n_sources": 50,
+      "P_0_measured_ms": 542.39,
+      "P_0_predicted_ms": 329.05,
+      "P_0_abs_error_pct": 39.33,
+      "P_2_measured_ms": 680.757,
+      "P_2_predicted_ms": 489.5,
+      "P_2_abs_error_pct": 28.09,
+      "measured_speedup": 0.8,
+      "predicted_speedup": 0.67
+    }
+  ]
+}
