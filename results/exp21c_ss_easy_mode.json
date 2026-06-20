@@ -1,0 +1,26 @@
+{
+  "experiment": "exp21c_ss_easy_mode",
+  "description": "Easy-mode probe: linear labels, low noise, no zero-padding.",
+  "model_accuracy": 0.725,
+  "baselines": {
+    "random": 0.31,
+    "feature_argmax": 0.32,
+    "gradmag_argmax": 0.32
+  },
+  "traceprop_ss": {
+    "correct_source_p1": 0.3,
+    "per_segment_p1": {
+      "bureau": "0/92 = 0.000",
+      "previous_application": "26/51 = 0.510",
+      "application": "34/57 = 0.596"
+    },
+    "latency_ms_per_query": 0.0711
+  },
+  "pre_registered": {
+    "lift_over_random": -0.01,
+    "lift_over_gradmag": -0.02,
+    "pass_random": false,
+    "pass_gradmag": false,
+    "overall_pass": false
+  }
+}

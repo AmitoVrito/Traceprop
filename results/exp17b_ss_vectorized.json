@@ -23,7 +23,7 @@
   "bureau_precision_at_1": 0.97,
   "full_ranking_consistency": 0.59,
   "cross_prediction_consistency_rho": 0.118,
-  "latency_ms_per_query_vectorized": 1.216,
-  "latency_ms_per_query_old_loop": 112.3,
-  "speedup_x": 92.4
+  "latency_ms_per_query_vectorized": 1.496,
+  "latency_ms_per_query_old_loop": 125.0,
+  "speedup_x": 83.5
 }

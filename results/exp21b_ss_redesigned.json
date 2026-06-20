@@ -1,0 +1,71 @@
+{
+  "experiment": "exp21b_ss_redesigned",
+  "description": "Redesigned Traceprop-SS validation. Shared 8-D feature space (no zero-padding), labels from regime-specific column interactions, pre-registered pass thresholds.",
+  "n_train": 9800,
+  "n_test": 200,
+  "d_feat": 8,
+  "model_accuracy": 0.56,
+  "source_cols": {
+    "bureau": [
+      0,
+      1
+    ],
+    "previous_application": [
+      3,
+      4
+    ],
+    "application": [
+      6,
+      7
+    ]
+  },
+  "source_counts_train": {
+    "bureau": 4908,
+    "previous_application": 2949,
+    "application": 1943
+  },
+  "baselines": {
+    "random": 0.31,
+    "feature_argmax": 0.315,
+    "gradmag_argmax": 0.315
+  },
+  "traceprop_ss": {
+    "correct_source_p1": 0.28,
+    "per_segment_p1": {
+      "bureau": {
+        "n_test": 92,
+        "correct": 0,
+        "p1": 0.0
+      },
+      "previous_application": {
+        "n_test": 51,
+        "correct": 23,
+        "p1": 0.451
+      },
+      "application": {
+        "n_test": 57,
+        "correct": 33,
+        "p1": 0.579
+      }
+    },
+    "cross_prediction_rho": -0.0045,
+    "latency_ms_per_query": 0.071,
+    "mean_influence": {
+      "bureau": -0.0,
+      "previous_application": 1e-06,
+      "application": -1e-06
+    },
+    "std_influence": {
+      "bureau": 1.2e-05,
+      "previous_application": 1.5e-05,
+      "application": 2.1e-05
+    }
+  },
+  "pre_registered_thresholds": {
+    "lift_over_random": 0.2,
+    "lift_over_gradmag": 0.1,
+    "pass_random": false,
+    "pass_gradmag": false,
+    "overall_pass": false
+  }
+}

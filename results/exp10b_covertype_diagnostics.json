@@ -1,0 +1,48 @@
+{
+  "setup": {
+    "N_TRAIN": 50000,
+    "N_TEST": 500,
+    "N_SUBSETS": 500,
+    "PROJ_DIM": 4096
+  },
+  "runs": {
+    "p=0.5": {
+      "p_inclusion": 0.5,
+      "mean_pairwise_jaccard": 0.3331,
+      "mean_margin_std": 0.1067,
+      "lds_by_subset_count": {
+        "100": {
+          "lds_mean": 0.9744,
+          "lds_std": 0.1112
+        },
+        "250": {
+          "lds_mean": 0.9762,
+          "lds_std": 0.1041
+        },
+        "500": {
+          "lds_mean": 0.977,
+          "lds_std": 0.1013
+        }
+      }
+    },
+    "p=0.7": {
+      "p_inclusion": 0.7,
+      "mean_pairwise_jaccard": 0.5387,
+      "mean_margin_std": 0.0758,
+      "lds_by_subset_count": {
+        "100": {
+          "lds_mean": 0.9752,
+          "lds_std": 0.0978
+        },
+        "250": {
+          "lds_mean": 0.9763,
+          "lds_std": 0.1042
+        },
+        "500": {
+          "lds_mean": 0.9765,
+          "lds_std": 0.1052
+        }
+      }
+    }
+  }
+}
