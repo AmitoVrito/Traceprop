@@ -3,6 +3,33 @@
 All notable changes to Traceprop are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.7.0] — 2026-06-21
+
+### Added
+- `RandomProjection.project_batch(g: (n, p)) -> (n, k)` — vectorised
+  JL projection of an `n`-sample batch in a single BLAS matmul.
+- `GradientStore.log_batch(gradients, source_id, sample_index_offset,
+  source_node_ids)` — vectorised counterpart to `log_gradient()` that
+  projects all per-sample gradients in one call, avoiding the
+  per-sample Python dispatch loop.
+
+### Performance
+- End-to-end Traceprop-LL training overhead on Adult Income (n=6000,
+  20 epochs, batch_size=64, 5 trials): **48.3× → 14.4×** when using
+  `log_batch()` instead of `log_gradient()` per sample. Traceprop-BM
+  (batch-mean gradient logging) is unchanged at 1.98×.
+
+### Tests
+- 10 new tests for the batched APIs (`test_log_batch.py`); 8 new tests
+  for source-stratified attribution and `top_k_influential`
+  (`test_source_stratified.py`). Coverage 90.90% (was 87.58%).
+
+## [0.6.0] — 2026-01-15
+
+### Added
+- Cross-platform overhead microbenchmark (op / batch / element modes).
+- Provenance query examples in `examples/`.
+
 ## [0.5.0] — 2025-12-01
 
 ### Added

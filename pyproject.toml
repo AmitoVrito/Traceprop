@@ -1,6 +1,6 @@
 [project]
 name = "traceprop"
-version = "0.6.0"
+version = "0.7.0"
 description = "Computation-level data lineage, gradient attribution, and provenance-guided unlearning in production ML"
 readme = "README.md"
 requires-python = ">=3.10"

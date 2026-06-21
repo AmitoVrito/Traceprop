@@ -63,14 +63,17 @@ class RandomProjection:
         return self._matrix @ flat
 
     def project_batch(self, gradients: np.ndarray) -> np.ndarray:
-        """Project an (n, input_dim) batch in a single BLAS matmul."""
-        g = gradients.astype(np.float32, copy=False)
-        if g.ndim != 2 or g.shape[1] != self.input_dim:
+        """Project an (n, input_dim) batch in a single BLAS matmul.
+
+        Returns float32 to match :meth:`project`.
+        """
+        if gradients.ndim != 2 or gradients.shape[1] != self.input_dim:
             raise ValueError(
-                f"Expected ({-1}, {self.input_dim}); got {g.shape}"
+                f"Expected (n, {self.input_dim}); got {gradients.shape}"
             )
-        # (n, p) @ (p, k) -> (n, k)
-        return g @ self._matrix.T
+        g = gradients.astype(np.float32, copy=False)
+        # (n, p) @ (p, k) -> (n, k), explicitly float32
+        return (g @ self._matrix.T).astype(np.float32, copy=False)
 
 
 class GradientStore:

@@ -1,4 +1,4 @@
-traceprop==0.6.0
+traceprop==0.7.0
 gradio==5.50.0
 scikit-learn>=1.3
 scipy>=1.7

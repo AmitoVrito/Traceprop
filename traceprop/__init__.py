@@ -12,7 +12,7 @@ from traceprop.graph import get_graph, reset_graph
 from traceprop.query import ProvenanceView
 from traceprop.tensor import ProvenanceTensor
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 
 def array(data: Any, dtype=None, source_id: str | None = None, **kwargs) -> ProvenanceTensor:
