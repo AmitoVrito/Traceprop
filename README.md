@@ -52,8 +52,8 @@ A single Traceprop query answers:
 |---|---|
 | **Lineage tracking** | Sub-1% overhead in op-mode; tracks every NumPy, PyTorch, and JAX operation |
 | **Attribution** | LDS 0.976 on Covertype 50K, 0.884 on Adult Income — at 0.22–5.2 s CPU, no GPU needed |
-| **Source-stratified attribution (SS)** | Aggregates per-sample scores to source-file level; 100% correct-source P@1 on realistic 3-table ETL schema; 0.89 ms/query |
-| **Approximate unlearning** | Provenance-guided gradient correction; closes >100% of the retrain-from-scratch gap on real data |
+| **Source-stratified attribution (SS)** | Aggregates per-sample scores to source-table level via the lineage graph; SAB v1 benchmark on 4 real datasets (COMPAS +16.4 pp, Lending Club +5.0 pp on 1.3M loans, Home Credit +4.2 pp, Bank Marketing −2.2 pp); paired t-test + Wilcoxon + bootstrap with Bonferroni at α=0.0125 |
+| **Approximate unlearning** | Provenance-guided gradient correction; reliable separation from random baseline (~0%) across 10 seeds on Adult Income and Covertype |
 | **Compliance reporting** | Structured JSON audit trail for EU AI Act Article 26 obligations |
 | **Data valuation** | KNN-Shapley values aggregated by source file and preprocessing op |
 
@@ -281,40 +281,31 @@ Sub-1% overhead at 10⁶+ array elements.
 
 ### Unlearning
 
-| Dataset | Method | Forget-set Loss | Gap Closed | Test Acc. |
-|---|---|---|---|---|
-| Synthetic (n=1K) | Original | 0.379 | — | 0.920 |
-| Synthetic (n=1K) | Gold (retrain) | 0.401 | 100% | — |
-| Synthetic (n=1K) | Traceprop | 0.425 | >100% | 0.915 |
-| Synthetic (n=1K) | Random | 0.382 | 17% | — |
-| Adult Income (n=6K) | Original | 3.225 | — | 0.840 |
-| Adult Income (n=6K) | Gold (retrain) | 3.858 | 100% | — |
-| Adult Income (n=6K) | Traceprop | 4.284 | **>100% (167%)** | **0.842** |
-| Adult Income (n=6K) | Random | 3.233 | 1.2% | — |
-| Covertype (n=50K) | Original | 2.163 | — | 0.760 |
-| Covertype (n=50K) | Gold (retrain) | 2.402 | 100% | — |
-| Covertype (n=50K) | Traceprop | 2.698 | **>100% (224%)** | **0.749** |
-| Covertype (n=50K) | Random | 2.162 | −0.4% | — |
+Multi-seed gap-closed (mean ± std over 10 seeds; `C=100`, $|\mathcal{F}|$ selected by top-attribution; `exp19b`):
 
-Provenance-guided gradient correction closes >100% of the retrain-from-scratch gap at both scales. Test accuracy is fully preserved (Adult Income: 0.842 vs. 0.840 original; Covertype: 0.749 vs. 0.760 original — 1.1 pp drop). Random-sample baseline closes near 0% at both scales.
-
-### Source-stratified attribution (SS)
-
-Traceprop-SS answers "which source *file* drove this prediction?" by aggregating per-sample TRAK scores to source-file level via the lineage graph. No prior attribution system (TRAK, LogIX, dattri) exposes source-file-level influence.
-
-**Controlled synthetic validation** (exp17b — known ground truth, injected signal)
-
-| Schema | Bureau P@1 | Latency | Speedup vs loop |
+| Dataset | Method | Gap Closed | Test Acc. |
 |---|---|---|---|
-| 3-source (bureau / application / prev\_app, n=19,850) | **0.970** | 0.89 ms/query | 92× |
+| Adult Income (n=6K) | **Traceprop (3 steps, tuned)** | **248% ± 149%** | 0.846 ± 0.025 |
+| Adult Income (n=6K) | Traceprop (5 steps, sensitivity) | 534% ± 281% | 0.840 ± 0.027 |
+| Adult Income (n=6K) | Random | 0.7% ± 6.7% | 0.840 ± 0.025 |
+| Covertype (n=50K) | **Traceprop (2 steps, tuned)** | **52% ± 22%** | 0.754 ± 0.015 |
+| Covertype (n=50K) | Traceprop (5 steps, sensitivity) | 150% ± 63% | 0.748 ± 0.020 |
+| Covertype (n=50K) | Random | 0.1% ± 0.7% | 0.760 ± 0.012 |
 
-**Realistic ETL validation** (exp21 — Home Credit schema, domain-motivated labels, no injected signal)
+Gap-closed is highly seed-dependent because the influence-ranked forget set $\mathcal{F}$ shifts with the seed used to fit the original model, and small shifts cause large multiplicative swings in $L_{\text{method}}$. The load-bearing signal is the random baseline (~0% at both scales, reliably distinct from every Traceprop row) — provenance-identified forget sets are materially more influential than randomly chosen samples. Test accuracy stays within 1.1 pp of the unmodified model.
 
-| Schema | Correct-source P@1 | Baseline | Latency |
-|---|---|---|---|
-| 3-table (bureau / prev\_app / application, n=9,800) | **1.000** | 0.333 | 0.07 ms/query |
+### Source-stratified attribution (SAB v1)
 
-Disjoint feature columns per source table (bureau: count/overdue\_rate/log\_amount; prev\_app: count/approval\_rate/log\_amount; application: employment/region) produce orthogonal gradient subspaces. Traceprop-SS exploits this structure without any knowledge of which columns belong to which table.
+Traceprop-SS answers "which source *table* drove this prediction?" by aggregating per-sample TRAK scores to source-file level via the lineage graph and applying a prior-corrected block-magnitude aggregator (`exp22b/c/d/e/f`). SAB v1 ships a four-dataset benchmark with paired t-test, Wilcoxon, and bootstrap CI; we report each below over 20 disjoint held-out seeds.
+
+| Dataset | n | SS | gradmag baseline | Δ (pp) | paired p | wins |
+|---|---|---|---|---|---|---|
+| COMPAS recidivism | 5,278 | 0.630 | 0.466 | **+16.4** | <10⁻⁴ | 20/20 |
+| Home Credit Default Risk | 307,511 | 0.567 | 0.524 | **+4.2** | 0.008 | 15/20 |
+| Lending Club (1.3M subsampled to 50K/seed) | 1,303,607 | 0.670 | 0.619 | **+5.0** | <10⁻¹⁰ | 20/20 |
+| Bank Marketing | 45,211 | 0.481 | 0.503 | −2.2 | 0.034 | 6/20 |
+
+The first three datasets clear Bonferroni at α=0.05/4=0.0125 on paired t-test, Wilcoxon signed-rank, and bootstrap 95% CI (all positive throughout); Bank Marketing is the regime boundary — under Bonferroni the negative result is "absence of significant positive effect," not a significant negative. The contribution is regime-specific: SS helps when source partitions correspond to data-collection or ETL provenance over structurally different upstream artifacts (joined tables with distinct aggregations), not when source groups are partitions of a single shallow categorical-heavy table.
 
 ---
 
