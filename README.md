@@ -410,21 +410,18 @@ pytest
 If you use Traceprop in research, please cite:
 
 ```bibtex
-@article{nautiyal2027traceprop,
+@misc{traceprop2027,
   author    = {Amit Nautiyal},
   title     = {{Traceprop}: Computation-Level Data Lineage, Gradient Attribution,
                and Provenance-Guided Unlearning in Production {ML}},
-  journal   = {Proceedings of the VLDB Endowment},
-  volume    = {20},
   year      = {2027},
   doi       = {10.5281/zenodo.20036000},
   url       = {https://zenodo.org/records/20036000},
-  note      = {Submitted to PVLDB Vol. 20 (VLDB 2027).
-               Software: https://pypi.org/project/traceprop/}
+  note      = {Software: \url{https://pypi.org/project/traceprop/}}
 }
 ```
 
-The accompanying paper is submitted to the **Proceedings of the VLDB Endowment, Volume 20 (VLDB 2027)**. A Zenodo preprint is available at **https://zenodo.org/records/20036000** (DOI: 10.5281/zenodo.20036000).
+A Zenodo preprint is available at **https://zenodo.org/records/20036000** (DOI: 10.5281/zenodo.20036000).
 
 ---
 
