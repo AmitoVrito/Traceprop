@@ -104,12 +104,16 @@ def _build_state() -> None:
     )
 
 
-_build_state()
+def _ensure_state() -> dict:
+    if not _state:
+        _build_state()
+    return _state
+
 
 # ── Tab 1: Attribution ─────────────────────────────────────────────────────────
 
 def run_attribution(test_idx: int, estimator: str, top_k: int):
-    s = _state
+    s = _ensure_state()
     x = s["X_te"][int(test_idx)]
     y = int(s["y_te"][int(test_idx)])
 
@@ -301,7 +305,7 @@ def run_provenance(source_a_rows: int, source_b_rows: int, add_norm: bool, add_c
 # ── Tab 3: Unlearning ──────────────────────────────────────────────────────────
 
 def run_unlearning(target_idx: int, n_steps: int, lr_exp: float):
-    s = _state
+    s = _ensure_state()
     lr = 10 ** float(lr_exp)
     target_idx = int(target_idx)
     n_steps = int(n_steps)
@@ -422,27 +426,169 @@ HEADER = """
 """
 
 ATTRIBUTION_INTRO = """
-**Which training samples most influenced this prediction?**
+### 🎯 "Why did the model say that?"
 
-Traceprop records per-sample gradients during training via `tp.training_context()` and computes
-influence scores at query time in **milliseconds** — no GPU needed for tabular models.
-Pick any test sample and see which training points shaped its output, and by how much.
+Pick a **test patient** on the left. Traceprop shows the **top-K training patients** whose
+data most pushed the model toward the answer it gave.
+
+**How it works in one line:** during training we recorded a tiny "fingerprint" (a gradient
+vector) for every training sample; at query time we take the test sample's fingerprint and
+dot-product it against all training fingerprints — the biggest scores win. **No retraining,
+no GPU, ~milliseconds.**
+
+> 🟢 green bar = an *influential* training patient who pushed the answer in the same
+> direction.  🔴 red bar = a patient who pushed it in the *opposite* direction.
 """
 
 PROVENANCE_INTRO = """
-**Full computation lineage from source file to model input.**
+### 🗂️ "Where did this data come from?"
 
-Wrap any NumPy array with `tp.from_numpy(X, source_id="...")` and Traceprop automatically
-records every tensor operation in a lightweight lineage graph. Useful for EU AI Act Article 10
-data-governance audits and answering *"where did this training sample come from?"*
+Imagine combining data from two hospitals, normalising it, clipping outliers, then handing
+the result to a model. Three months later auditors ask: *"For this final value, which
+hospital, which row, and which transformations produced it?"*
+
+Traceprop answers that in **< 1 ms** by recording every NumPy/PyTorch/JAX operation as an
+edge in a lightweight **lineage graph**. Move the sliders below to see how the graph grows
+when you add preprocessing steps.
+
+> Each box is a tensor; each arrow is one tracked operation. Tracing back from the output
+> to the source hospitals is just a graph walk.
 """
 
 UNLEARNING_INTRO = """
-**Remove a training sample's influence without full retraining.**
+### 🧹 "Make the model forget this one sample."
 
-Traceprop performs provenance-guided gradient ascent to surgically maximise the loss on a
-specific sample — reducing its influence on model weights. Useful for GDPR right-to-erasure
-and removing mislabelled data without expensive retraining from scratch.
+GDPR / EU AI Act says a user can ask: *"delete the influence of my record."* Retraining the
+whole model from scratch is expensive (minutes to hours). Traceprop does it in **seconds**
+by taking a few **reverse** gradient steps on the sample you want forgotten — pushing its
+loss back up while leaving every other prediction (almost) untouched.
+
+The two charts below show **(left)** how much harder the model now finds the forgotten
+sample, and **(right)** how little the rest of test accuracy moves. The gap between the two
+is the whole point.
+"""
+
+HOW_IT_WORKS_MD = """
+## 🎓 How Traceprop works — in 3 minutes
+
+Three questions, one library, one shared trick.
+
+---
+
+### The shared trick: a "fingerprint" per training sample
+
+When you train a model, each training sample tugs the model's weights in some direction.
+That tug is a **gradient vector** — a small list of numbers that captures *how* that sample
+shaped the model.
+
+Traceprop records that fingerprint for every training sample (compressed via a sparse
+projection so it stays small) and stores it in a **GradientStore** keyed by
+`(source_id, sample_index)`.
+
+```python
+import traceprop as tp
+
+with tp.training_context(model, X_train, y_train, source_id="my_dataset") as ctx:
+    train(model, X_train, y_train)        # ← fingerprints recorded automatically
+```
+
+That single store powers all three tabs.
+
+---
+
+### 1. Attribution — "which fingerprints look like the test one?"
+
+For a test sample, we compute its fingerprint the same way. Then we **dot-product it
+against every stored training fingerprint**. The biggest scores = the most influential
+training samples.
+
+```python
+engine = tp.attribution_engine(ctx.gradient_store, estimator="trak")
+result = engine.attribute(test_gradient, top_k=10)
+for entry in result.top(10):
+    print(entry["sample_index"], entry["influence_score"])
+```
+
+📈 **Tab 1 ("Attribution")** runs exactly this for a logistic-regression model on the
+Wisconsin Breast Cancer dataset. Positive influence = pushed toward the model's answer.
+
+---
+
+### 2. Provenance — "where did this data come from?"
+
+Wrap any input array in `tp.from_numpy(X, source_id="hospital_A")`. From that moment,
+**every** tensor operation (add, multiply, normalise, clip, matmul, …) is recorded as an
+edge in a directed acyclic **lineage graph**:
+
+```python
+a = tp.from_numpy(rows_a, source_id="hospital_A")
+b = tp.from_numpy(rows_b, source_id="hospital_B")
+combined = np.concatenate([a, b])                  # ← edge recorded
+scaled   = combined * 0.5                          # ← edge recorded
+normed   = (scaled - scaled.mean(0)) / scaled.std(0)  # ← edges recorded
+
+tp.provenance(normed).sources()       # → ["hospital_A", "hospital_B"]
+tp.provenance(normed).ops()           # → ["concat", "mul", "sub", "mean", "std", "div"]
+tp.provenance(normed).ancestors()     # → set of all tensor IDs that feed into `normed`
+```
+
+Tracing is just a **graph walk** — sub-millisecond on graphs with tens of thousands of
+operations thanks to ProvRC range compression.
+
+🗂️ **Tab 2 ("Provenance")** builds exactly this kind of graph live and shows the
+operation chain.
+
+---
+
+### 3. Unlearning — "undo one sample's tug"
+
+If sample *i* pulled the weights in direction **g_i** during training, taking a small step
+in direction **+g_i** at query time pushes them back. Repeat a few times and the model has
+essentially forgotten that sample — without ever revisiting the rest of the data.
+
+```python
+tp.unlearn(model=model, gradient_store=ctx.gradient_store, forget_index=42, n_steps=5)
+```
+
+🧹 **Tab 3 ("Unlearning")** does this with one training patient and compares
+loss-on-that-patient (should jump up — the model now "doesn't know" it) against test
+accuracy (should barely move — other patients are untouched).
+
+---
+
+### What you'd see on a four-row toy example
+
+| Row | Features | Label | Fingerprint (sketch) |
+|----:|----------|-------|----------------------|
+|  0  | `[0.9, 0.1]`  | benign     | `[+0.41, −0.12, +0.07, …]` |
+|  1  | `[0.2, 0.8]`  | malignant  | `[−0.38, +0.45, −0.11, …]` |
+|  2  | `[0.7, 0.3]`  | benign     | `[+0.39, −0.10, +0.05, …]` |
+|  3  | `[0.1, 0.9]`  | malignant  | `[−0.42, +0.48, −0.15, …]` |
+
+A **test query** with features `[0.8, 0.2]` has fingerprint `[+0.40, −0.11, +0.06, …]`.
+Dot-product with each row:
+
+| vs row | dot product | meaning |
+|------:|------------:|---------|
+| 0 | **+0.18** | strong agreement → most influential |
+| 2 | **+0.16** | strong agreement |
+| 1 | −0.17 | strong disagreement (opposite direction) |
+| 3 | −0.19 | strong disagreement |
+
+The top-2 influential rows are #0 and #2 — both benign patients that look like the test
+patient. That is what you'll see on the **Attribution** tab, just with 30 features and
+400 patients instead of 2 and 4.
+
+To **unlearn** row 0, we add a small multiple of row 0's fingerprint back into the
+weights. That single row's loss spikes, and the model's prediction for the *test* sample
+moves slightly toward the malignant side — the other 399 rows still anchor it. That's
+exactly what the **Unlearning** tab shows on a real model.
+
+---
+
+**TL;DR:** record one fingerprint per training sample → use it to answer
+*"who was influential?"*, *"where did this come from?"*, and *"can you forget this?"* —
+all in milliseconds, all on CPU.
 """
 
 BENCHMARKS_MD = """
@@ -474,8 +620,6 @@ Traceprop is a **production-grade ML explainability library** that uniquely comb
 
 **Install:** `pip install traceprop`
 
-**Paper:** VLDB 2027 (under submission)
-
 **Author:** Amit — Independent Researcher
 """
 
@@ -485,13 +629,17 @@ with gr.Blocks(title="Traceprop — Training Data Attribution & Provenance") as 
 
     with gr.Tabs():
 
+        # ── Tab 0: How it works ────────────────────────────────────────────
+        with gr.Tab("🎓 How it works"):
+            gr.Markdown(HOW_IT_WORKS_MD)
+
         # ── Tab 1: Attribution ─────────────────────────────────────────────
         with gr.Tab("🎯 Attribution"):
             gr.Markdown(ATTRIBUTION_INTRO)
             with gr.Row():
                 with gr.Column(scale=1, min_width=240):
                     t1_idx = gr.Slider(
-                        0, _state["n_test"] - 1, value=0, step=1,
+                        0, 168, value=0, step=1,
                         label="Test Sample Index",
                     )
                     t1_estimator = gr.Radio(
@@ -553,11 +701,9 @@ with gr.Blocks(title="Traceprop — Training Data Attribution & Provenance") as 
             with gr.Row():
                 with gr.Column(scale=1, min_width=240):
                     t3_idx = gr.Slider(
-                        0, _state["n_train"] - 1,
-                        value=_state["default_forget_idx"],
-                        step=1,
+                        0, 399, value=0, step=1,
                         label="Training Sample to Forget",
-                        info="Default is a 'hard' sample where loss > 0.05 so the effect is visible.",
+                        info="Default is index 0; try higher indices for visible effect.",
                     )
                     t3_steps = gr.Slider(
                         5, 100, value=50, step=5,
@@ -648,11 +794,10 @@ with gr.Blocks(title="Traceprop — Training Data Attribution & Provenance") as 
         '<p style="text-align:center;font-size:0.8rem;color:#9ca3af;margin-top:12px;">'
         '📦 <a href="https://pypi.org/project/traceprop/" style="color:#6366f1;">traceprop</a> '
         '&nbsp;·&nbsp; Apache 2.0 License &nbsp;·&nbsp; '
-        '<a href="https://github.com/AmitoVrito/Traceprop" style="color:#6366f1;">GitHub</a> '
-        '&nbsp;·&nbsp; VLDB 2027 submission'
+        '<a href="https://github.com/AmitoVrito/Traceprop" style="color:#6366f1;">GitHub</a>'
         '</p>'
     )
 
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(ssr_mode=False)

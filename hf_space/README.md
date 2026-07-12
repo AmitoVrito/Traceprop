@@ -86,7 +86,6 @@ tp.unlearn(model=model, gradient_store=ctx.gradient_store, source_id="bad_source
 
 - 📦 **PyPI:** `pip install traceprop`
 - 🐙 **GitHub:** [AmitoVrito/Traceprop](https://github.com/AmitoVrito/Traceprop)
-- 📄 **Paper:** VLDB 2027 (under submission)
 
 ## Feedback
 
