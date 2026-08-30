@@ -229,13 +229,15 @@ def run(args):
         model.train()
         return margin.detach().cpu().numpy()
 
-    def collect_grads(model, X, y, track, kind):
-        """Projected per-sample gradients (n, proj_dim) via LoRAGradientLogger.
-        kind='loss' → grad of CE loss (train); kind='margin' → grad of the signed
-        margin (test query), matching TRAK's output-function gradient."""
+    HEAD = ("score", "classifier")
+
+    def collect_grads(model, X, y, patterns, last_n, kind):
+        """Projected per-sample gradients (n, proj_dim) via LoRAGradientLogger,
+        tracking the linear modules whose name contains any of `patterns`
+        (optionally restricted to the last `last_n` transformer blocks).
+        kind='loss' → grad of CE loss."""
         store = GradientStore(proj_dim=args.proj_dim, seed=42)
-        last_n = None if track <= 0 else track
-        targets = select_lora_linears(model, ("lora_A", "lora_B"), last_n_blocks=last_n)
+        targets = select_lora_linears(model, patterns, last_n_blocks=last_n)
         lg = LoRAGradientLogger(store, targets, proj_dim=args.proj_dim)
         n = len(X)
         for s in range(0, n, args.batch):
@@ -253,7 +255,7 @@ def run(args):
             obj.backward()
             lg.flush_step(sample_indices=range(s, s + len(xb)))
         lg.detach()
-        return store.get_projected_matrix(), targets
+        return store.get_projected_matrix()
 
     # ---- 1) train target model on full data, collect grads ----
     print(f"[exp27] training target model on {n_train} examples ...")
@@ -265,9 +267,19 @@ def run(args):
     # Loss gradient for both train and test: <grad_loss(z), grad_loss(j)> is
     # positive for helpful same-class examples, which increase the test margin,
     # so the influence score correlates *positively* with the retrained margin.
-    for name, track in [("last", args.track), ("all", 0)]:
-        gtr, _ = collect_grads(target_model, Xtr_t, ytr_t, track, "loss")
-        gte, _ = collect_grads(target_model, Xte_t, yte_t, track, "loss")
+    # Three tracking scopes (all include the head — the decision layer):
+    #   head_only  = Traceprop-LL (pure last layer)          — cheapest
+    #   last_block = head + last-block LoRA (exp25/26 config) — cheap
+    #   all_layers = head + all LoRA (TRAK-style)             — expensive baseline
+    ln = None if args.track <= 0 else args.track
+    scopes = {
+        "head_only": (HEAD, None),
+        "last_block": (("lora_A", "lora_B") + HEAD, ln),
+        "all_layers": (("lora_A", "lora_B") + HEAD, None),  # None = all blocks
+    }
+    for name, (patterns, last_n) in scopes.items():
+        gtr = collect_grads(target_model, Xtr_t, ytr_t, patterns, last_n, "loss")
+        gte = collect_grads(target_model, Xte_t, yte_t, patterns, last_n, "loss")
         grads[name] = (gtr, gte)
 
     # ---- 2) ground-truth LDS margins from subset retraining ----
@@ -301,14 +313,12 @@ def run(args):
         return gte @ np.linalg.solve(H, gtr.T)
 
     results = {}
-    gtr_l, gte_l = grads["last"]
-    gtr_a, gte_a = grads["all"]
-    # dot and TRAK estimator for BOTH last-block (Traceprop) and all-layers (TRAK)
-    # → the parity comparison is controlled: only the tracked layers differ.
-    results["last_block_dot"] = lds_for(dot_scores(gtr_l, gte_l))
-    results["last_block_trak"] = lds_for(trak_scores(gtr_l, gte_l))
-    results["all_layers_dot"] = lds_for(dot_scores(gtr_a, gte_a))
-    results["all_layers_trak"] = lds_for(trak_scores(gtr_a, gte_a))
+    # dot and TRAK estimator for each tracking scope → controlled parity:
+    # only the tracked layers differ (head_only ⊂ last_block ⊂ all_layers).
+    for scope in ("head_only", "last_block", "all_layers"):
+        gtr, gte = grads[scope]
+        results[f"{scope}_dot"] = lds_for(dot_scores(gtr, gte))
+        results[f"{scope}_trak"] = lds_for(trak_scores(gtr, gte))
     rng2 = np.random.default_rng(0)
     results["random"] = lds_for(rng2.standard_normal((n_test, n_train)).astype(np.float32))
 
