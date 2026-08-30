@@ -196,7 +196,8 @@ def run(args):
 
     # ---- instrumented ----
     store = GradientStore(proj_dim=args.proj_dim, seed=42)
-    targets = select_lora_linears(model, ("lora_A", "lora_B"))
+    last_n = None if args.track <= 0 else args.track
+    targets = select_lora_linears(model, ("lora_A", "lora_B"), last_n_blocks=last_n)
     logger = LoRAGradientLogger(
         store, targets, source_id=args.backend, proj_dim=args.proj_dim
     )
@@ -218,6 +219,7 @@ def run(args):
         "seq": args.seq,
         "rank": args.rank,
         "proj_dim": args.proj_dim,
+        "track_last_n_blocks": args.track,
         "n_tracked_layers": len(targets),
         "per_sample_grad_dim": grad_dim,
         "samples_logged": len(store),
@@ -251,6 +253,8 @@ def main():
     ap.add_argument("--rank", type=int, default=8)
     ap.add_argument("--d", type=int, default=256, help="tiny model width")
     ap.add_argument("--n_blocks", type=int, default=2, help="tiny model depth")
+    ap.add_argument("--track", type=int, default=1,
+                    help="track only the last N transformer blocks (0/-1 = all layers)")
     ap.add_argument("--proj_dim", type=int, default=2048)
     args = ap.parse_args()
     run(args)

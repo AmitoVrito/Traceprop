@@ -36,15 +36,51 @@ def _is_linear(module: Any) -> bool:
     return isinstance(module, nn.Linear)
 
 
-def select_lora_linears(model: Any, patterns: Iterable[str]) -> "list[tuple[str, Any]]":
+def _block_index(name: str) -> Optional[int]:
+    """Extract a transformer block index from a module's qualified name.
+
+    Handles the common layouts: ``transformer.h.11.…`` (GPT-2),
+    ``gpt_neox.layers.23.…`` (Pythia/NeoX), ``model.layers.7.…`` (Llama).
+    Returns ``None`` if no block index is present.
+    """
+    import re
+    m = re.search(r"(?:^|\.)(?:h|layers|blocks)\.(\d+)\.", name)
+    return int(m.group(1)) if m else None
+
+
+def select_lora_linears(
+    model: Any,
+    patterns: Iterable[str],
+    last_n_blocks: Optional[int] = None,
+) -> "list[tuple[str, Any]]":
     """Return ``(name, module)`` for every ``nn.Linear`` whose qualified name
-    contains any of ``patterns`` (e.g. ``("lora_A", "lora_B")`` for PEFT, or
-    ``("lora",)`` / a specific layer name for a hand-built model)."""
-    out = []
-    for name, module in model.named_modules():
-        if _is_linear(module) and any(p in name for p in patterns):
-            out.append((name, module))
-    return out
+    contains any of ``patterns`` (e.g. ``("lora_A", "lora_B")`` for PEFT).
+
+    If ``last_n_blocks`` is set, keep only modules in the highest ``n`` block
+    indices — i.e. last-layer / last-few-block attribution. This is the cheap,
+    high-signal regime (Traceprop-LL): the projected-gradient dimension, and
+    therefore the JL projection matrix and its per-step read cost, scale with
+    the number of tracked parameters, so restricting to the final block(s)
+    is what keeps inline logging in the sub-1% overhead regime.
+    """
+    patterns = tuple(patterns)
+    matched = [
+        (name, module)
+        for name, module in model.named_modules()
+        if _is_linear(module) and any(p in name for p in patterns)
+    ]
+    if last_n_blocks is None:
+        return matched
+
+    idxs = [i for i in (_block_index(n) for n, _ in matched) if i is not None]
+    if not idxs:
+        return matched  # no block structure detected; track everything matched
+    cutoff = max(idxs) - last_n_blocks + 1
+    return [
+        (name, module)
+        for name, module in matched
+        if (_block_index(name) is None or _block_index(name) >= cutoff)
+    ]
 
 
 class LoRAGradientLogger:

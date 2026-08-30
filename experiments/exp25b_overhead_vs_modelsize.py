@@ -43,7 +43,7 @@ def main():
         ns = SimpleNamespace(
             backend="tiny", model="gpt2", device="cpu",
             steps=args.steps, warmup=3, batch=args.batch, seq=args.seq,
-            rank=8, proj_dim=args.proj_dim, d=d, n_blocks=nb,
+            rank=8, proj_dim=args.proj_dim, d=d, n_blocks=nb, track=0,
         )
         r = run(ns)
         rows.append({
