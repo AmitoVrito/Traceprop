@@ -186,6 +186,12 @@ def run(args):
     n_train, n_test = len(Xtr), len(Xte)
 
     def new_model():
+        # Deterministic init: every subset-retrain must start from the SAME
+        # parameters so the only variation across subsets is the training data
+        # (a hard requirement for LDS — a random head/LoRA init per subset adds
+        # variance that drowns the attribution signal).
+        torch.manual_seed(1234)
+        np.random.seed(1234)
         if args.backend == "tiny":
             m = build_tiny_classifier(vocab, seq=args.seq, r=args.rank)
         else:
