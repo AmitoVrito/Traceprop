@@ -104,6 +104,26 @@ def run(args):
         sync()
         return time.perf_counter() - t0
 
+    def flush_cost_pass(logger):
+        """Directly time only the logging work over one sweep, with a sync
+        around each flush so the GPU cost is attributed (not hidden by overlap).
+        This measures the inline marginal cost *without* the noisy subtraction of
+        two large full-pass times — a clean, conservative logging cost."""
+        total = 0.0
+        for bi, xb in enumerate(batches):
+            opt.zero_grad(set_to_none=True)
+            loss_fn(xb).backward()
+            sync()
+            t0 = time.perf_counter()
+            logger.flush_step(
+                sample_indices=range(bi * args.batch, (bi + 1) * args.batch),
+                buffer=False,
+            )
+            sync()
+            total += time.perf_counter() - t0
+            opt.step()
+        return total
+
     # Build ONE logger and warm it: the projection-matrix construction (a large
     # one-time multinomial) and allocator growth must happen OUTSIDE every timed
     # region. In a real deployment this matrix is built once at setup and
@@ -134,13 +154,20 @@ def run(args):
         posthoc_times.append(t_ph)
     posthoc = statistics.median(posthoc_times)
     posthoc_std = statistics.pstdev(posthoc_times) if len(posthoc_times) > 1 else 0.0
+
+    # --- direct (clean) inline logging cost: time only flush, synced ---
+    flush_costs = [flush_cost_pass(logger) for _ in range(args.repeats)]
+    inline_flush = statistics.median(flush_costs)
+    inline_flush_std = statistics.pstdev(flush_costs) if len(flush_costs) > 1 else 0.0
     logger.detach()
     n_logged = n_per_pass  # store size for ONE pass over the dataset (not accumulated)
 
     base_train = statistics.median(base_train_times)
     store_bytes = n_logged * stored_dim * 4
-    speedup_logra = posthoc / inline_marginal if inline_marginal > 0 else float("nan")
-    speedup_trak = posthoc * args.trak_ckpts / inline_marginal if inline_marginal > 0 else float("nan")
+    # Robust speedup uses the directly-timed (synced) flush cost, not the noisy
+    # pass-difference. inline_flush is the conservative logging cost per pass.
+    speedup_logra = posthoc / inline_flush if inline_flush > 0 else float("nan")
+    speedup_trak = posthoc * args.trak_ckpts / inline_flush if inline_flush > 0 else float("nan")
 
     result = {
         "backend": args.backend,
@@ -157,9 +184,13 @@ def run(args):
         "trak_ckpts": args.trak_ckpts,
         "store_mb": round(store_bytes / 1e6, 3),
         "base_train_pass_s": round(base_train, 4),
+        # direct clean logging cost (synced) — the reliable inline number
+        "inline_flush_s": round(inline_flush, 4),
+        "inline_flush_std": round(inline_flush_std, 4),
+        "inline_flush_overhead_pct": round(inline_flush / base_train * 100, 3),
+        # pass-difference marginal (noisy at sub-1% — kept for reference)
         "inline_marginal_s": round(inline_marginal, 4),
         "inline_marginal_std": round(inline_marginal_std, 4),
-        "inline_overhead_pct": round(inline_marginal / base_train * 100, 3),
         "posthoc_pass_s": round(posthoc, 4),
         "posthoc_pass_std": round(posthoc_std, 4),
         "speedup_vs_logra_1ckpt": round(speedup_logra, 1),
