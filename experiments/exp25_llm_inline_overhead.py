@@ -171,8 +171,21 @@ def run(args):
     trainable = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.SGD(trainable, lr=1e-3)
 
-    def train_steps(n, logger=None):
+    def sync():
+        if device == "cuda":
+            torch.cuda.synchronize()
+
+    def train_steps(n, logger=None, per_step_sync=True):
+        """Returns (per_step_times, total_wallclock).
+
+        per_step_sync=True forces a device sync each step → conservative
+        per-step medians (projection serialized against the step).
+        per_step_sync=False syncs only once at the end → realistic training
+        throughput, letting the projection overlap with compute.
+        """
         times = []
+        sync()
+        t_start = time.perf_counter()
         for step in range(n):
             t0 = time.perf_counter()
             opt.zero_grad(set_to_none=True)
@@ -180,35 +193,64 @@ def run(args):
             loss.backward()
             if logger is not None:
                 logger.flush_step(
-                    sample_indices=range(step * args.batch, (step + 1) * args.batch)
+                    sample_indices=range(step * args.batch, (step + 1) * args.batch),
+                    buffer=not per_step_sync,
                 )
             opt.step()
-            if device == "cuda":
-                torch.cuda.synchronize()
+            if per_step_sync:
+                sync()
             times.append(time.perf_counter() - t0)
-        return times
+        if logger is not None and not per_step_sync:
+            logger.drain()  # single host transfer, inside the timed region
+        sync()
+        total = time.perf_counter() - t_start
+        return times, total
 
-    # warmup (compile caches, cudnn autotune, allocator) — excluded from timing
+    def build_logger():
+        store = GradientStore(proj_dim=args.proj_dim, seed=42)
+        last_n = None if args.track <= 0 else args.track
+        targets = select_lora_linears(model, ("lora_A", "lora_B"), last_n_blocks=last_n)
+        logger = LoRAGradientLogger(
+            store, targets, source_id=args.backend, proj_dim=args.proj_dim,
+            factored=args.factored, kfac=args.kfac,
+        )
+        return store, targets, logger
+
+    def warm_logger(logger, n):
+        """Run n untimed steps with the logger so the projection matrix build
+        and allocator growth happen *outside* the timed region."""
+        for step in range(n):
+            opt.zero_grad(set_to_none=True)
+            loss_fn().backward()
+            logger.flush_step(sample_indices=range(step * args.batch, (step + 1) * args.batch))
+            opt.step()
+        sync()
+
+    # warmup baseline (compile caches, cudnn autotune, allocator) — excluded from timing
     train_steps(args.warmup)
 
-    # ---- baseline ----
-    base_times = train_steps(args.steps)
-
-    # ---- instrumented ----
-    store = GradientStore(proj_dim=args.proj_dim, seed=42)
-    last_n = None if args.track <= 0 else args.track
-    targets = select_lora_linears(model, ("lora_A", "lora_B"), last_n_blocks=last_n)
-    logger = LoRAGradientLogger(
-        store, targets, source_id=args.backend, proj_dim=args.proj_dim
-    )
-    inst_times = train_steps(args.steps, logger=logger)
+    # ---- conservative: per-step-synced medians ----
+    base_times, base_total = train_steps(args.steps, per_step_sync=True)
+    store, targets, logger = build_logger()
+    warm_logger(logger, args.warmup)
+    inst_times, inst_total = train_steps(args.steps, logger=logger, per_step_sync=True)
     grad_dim = logger.grad_dim
     logger.detach()
-    store_bytes = len(store) * args.proj_dim * 4  # float32
+
+    # ---- headline: realistic throughput (overlap allowed, one sync/run) ----
+    base_tp_times, base_tp = train_steps(args.steps, per_step_sync=False)
+    store, targets, logger = build_logger()
+    warm_logger(logger, args.warmup)
+    _, inst_tp = train_steps(args.steps, logger=logger, per_step_sync=False)
+    logger.detach()
+
+    stored_dim = store._proj_dim  # sketch_dim if factored, else proj_dim
+    store_bytes = len(store) * stored_dim * 4  # float32
 
     base_med = statistics.median(base_times)
     inst_med = statistics.median(inst_times)
     overhead = (inst_med - base_med) / base_med * 100.0
+    throughput_overhead = (inst_tp - base_tp) / base_tp * 100.0
 
     result = {
         "backend": args.backend,
@@ -219,6 +261,8 @@ def run(args):
         "seq": args.seq,
         "rank": args.rank,
         "proj_dim": args.proj_dim,
+        "factored": args.factored,
+        "stored_dim": stored_dim,
         "track_last_n_blocks": args.track,
         "n_tracked_layers": len(targets),
         "per_sample_grad_dim": grad_dim,
@@ -228,13 +272,17 @@ def run(args):
         "baseline_median_s": round(base_med, 6),
         "instrumented_median_s": round(inst_med, 6),
         "overhead_pct": round(overhead, 3),
+        "baseline_throughput_s": round(base_tp, 6),
+        "instrumented_throughput_s": round(inst_tp, 6),
+        "throughput_overhead_pct": round(throughput_overhead, 3),
         "baseline_mean_s": round(statistics.mean(base_times), 6),
         "instrumented_mean_s": round(statistics.mean(inst_times), 6),
     }
     print(json.dumps(result, indent=2))
 
     os.makedirs("results", exist_ok=True)
-    out = f"results/exp25_{args.backend}_{result['model'].replace('/', '_')}.json"
+    tag = f"track{args.track}"
+    out = f"results/exp25_{args.backend}_{result['model'].replace('/', '_')}_{tag}.json"
     with open(out, "w") as f:
         json.dump(result, f, indent=2)
     print(f"\nsaved -> {out}")
@@ -255,6 +303,9 @@ def main():
     ap.add_argument("--n_blocks", type=int, default=2, help="tiny model depth")
     ap.add_argument("--track", type=int, default=1,
                     help="track only the last N transformer blocks (0/-1 = all layers)")
+    ap.add_argument("--factored", action="store_true",
+                    help="use Kronecker-factored sketch (cheaper/step, lower quality/dim)")
+    ap.add_argument("--kfac", type=int, default=16, help="factored sketch width per factor")
     ap.add_argument("--proj_dim", type=int, default=2048)
     args = ap.parse_args()
     run(args)

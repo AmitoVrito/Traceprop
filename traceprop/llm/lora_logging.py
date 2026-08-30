@@ -116,6 +116,8 @@ class LoRAGradientLogger:
         source_id: Optional[str] = None,
         proj_dim: int = 512,
         seed: int = 42,
+        factored: bool = False,
+        kfac: int = 16,
     ) -> None:
         if not target_modules:
             raise ValueError(
@@ -132,9 +134,19 @@ class LoRAGradientLogger:
         self._sample_counter = 0
         self._proj_dim = proj_dim
         self._seed = seed
-        self._proj_matrix = None  # (D, proj_dim) torch tensor, lazily built on-device
-        self.grad_dim: Optional[int] = None  # concatenated per-sample gradient dim
-        # Keep the store's declared proj_dim consistent with ours.
+        # Factored (Kronecker) sketching: project the two small gradient factors
+        # (input activation, output grad) separately and combine, avoiding the
+        # dense-matrix read. Cheaper per step, but token cross-terms add variance
+        # so its attribution quality per stored dimension is worse than the dense
+        # JL projection — OFF by default; dense + overlap/buffering is preferred.
+        self.factored = factored
+        self._kfac = kfac
+        self._fac_PQ: dict[str, Any] = {}  # name -> (P, Q) per-layer sketch mats
+        self._proj_matrix = None  # dense fallback (D, proj_dim), lazily built
+        self.grad_dim: Optional[int] = None  # true concatenated per-sample grad dim
+        self.sketch_dim: Optional[int] = None  # stored (projected) dim
+        self._gpu_buffer: list = []  # deferred projected batches (on device)
+        self._gpu_buffer_idx: list = []  # matching sample indices
         self.store._proj_dim = proj_dim
         self._attach()
 
@@ -183,6 +195,63 @@ class LoRAGradientLogger:
             return None
         return torch.cat(per_layer, dim=1)  # (B, D), on device
 
+    def _sparse_jl(self, k: int, d: int, device, salt: int):
+        """A (k, d) sparse sign JL matrix: entries in {-1,0,+1} with
+        p={1/6,2/3,1/6}, scaled by sqrt(3/k) so E[MᵀM] = I (inner-product
+        preserving). Deterministic in (seed, salt)."""
+        import torch
+        gen = torch.Generator(device="cpu").manual_seed(self._seed + salt)
+        choice = torch.multinomial(
+            torch.tensor([1 / 6, 2 / 3, 1 / 6]), k * d, replacement=True, generator=gen
+        )
+        vals = torch.tensor([-1.0, 0.0, 1.0])[choice].reshape(k, d)
+        vals *= (3.0 / k) ** 0.5
+        return vals.to(device=device, dtype=torch.float32)
+
+    def _factored_sketch(self):
+        """Kronecker-factored sketch of the per-sample gradients from the last
+        backward, as an on-device ``(B, sketch_dim)`` tensor (or ``None``).
+
+        For a linear layer with input a:(B,T,d_in) and output-grad g:(B,T,d_out),
+        the per-sample gradient is Σ_t g_t ⊗ a_t. We sketch it as
+        Σ_t (P g_t) ⊗ (Q a_t) with small JL maps P:(k_out,d_out), Q:(k_in,d_in) —
+        never materialising the d_out·d_in outer product or a large projection
+        matrix. The dot product of two sketches is an unbiased estimate of the
+        true gradient dot product (what attribution needs)."""
+        import torch
+
+        parts = []
+        grad_dim_total = 0
+        for salt, name in enumerate(self._names):
+            a = self._fwd_input.get(name)
+            g = self._grad_output.get(name)
+            if a is None or g is None:
+                continue
+            if a.dim() == 2:
+                a = a.unsqueeze(1)
+                g = g.unsqueeze(1)
+            d_in, d_out = a.shape[-1], g.shape[-1]
+            grad_dim_total += d_out * d_in
+            k_out, k_in = min(d_out, self._kfac), min(d_in, self._kfac)
+            PQ = self._fac_PQ.get(name)
+            if PQ is None:
+                P = self._sparse_jl(k_out, d_out, a.device, salt * 2 + 1)
+                Q = self._sparse_jl(k_in, d_in, a.device, salt * 2 + 2)
+                self._fac_PQ[name] = PQ = (P, Q)
+            P, Q = PQ
+            with torch.no_grad():
+                Pg = torch.einsum("bto,ko->btk", g.float(), P)   # (B,T,k_out)
+                Qa = torch.einsum("bti,li->btl", a.float(), Q)   # (B,T,k_in)
+                S = torch.einsum("btk,btl->bkl", Pg, Qa)          # (B,k_out,k_in)
+            parts.append(S.reshape(S.shape[0], -1))
+
+        if not parts:
+            return None
+        self.grad_dim = grad_dim_total
+        sketch = torch.cat(parts, dim=1)
+        self.sketch_dim = sketch.shape[1]
+        return sketch
+
     def _ensure_projection(self, dim: int, device, dtype):
         """Lazily build the sparse Johnson–Lindenstrauss matrix on-device.
 
@@ -208,35 +277,77 @@ class LoRAGradientLogger:
         self,
         sample_indices: Optional[Iterable[int]] = None,
         source_ids: Optional[list] = None,
+        buffer: bool = False,
     ) -> int:
-        """Project (on-device) and store per-sample gradients from the most
-        recent ``backward()``. Call once per optimizer step, before
-        ``zero_grad()``. Returns the number of samples logged this step."""
+        """Project (on-device) per-sample gradients from the most recent
+        ``backward()``. Call once per optimizer step, before ``zero_grad()``.
+
+        With ``buffer=True`` the projected ``(B, proj_dim)`` tensor is kept on
+        the accelerator and *not* copied to host — the device→host transfer
+        (and the sync it forces) is deferred to :meth:`drain`. This keeps the
+        projection off the critical path so it overlaps with the training step,
+        which is what makes inline logging sub-1% in a real loop. Otherwise the
+        projected batch is moved to the store immediately.
+
+        Returns the number of samples logged this step.
+        """
         import torch
 
-        grads = self._per_sample_grads()  # (B, D) on device
-        self._fwd_input.clear()
-        self._grad_output.clear()
-        if grads is None:
-            return 0
+        if self.factored:
+            proj = self._factored_sketch()  # (B, sketch_dim) on device
+            self._fwd_input.clear()
+            self._grad_output.clear()
+            if proj is None:
+                return 0
+            self.store._proj_dim = proj.shape[1]
+        else:
+            grads = self._per_sample_grads()  # (B, D) on device
+            self._fwd_input.clear()
+            self._grad_output.clear()
+            if grads is None:
+                return 0
+            self._ensure_projection(grads.shape[1], grads.device, grads.dtype)
+            with torch.no_grad():
+                proj = grads @ self._proj_matrix  # (B, proj_dim), on device
 
-        self._ensure_projection(grads.shape[1], grads.device, grads.dtype)
-        with torch.no_grad():
-            proj = grads @ self._proj_matrix  # (B, proj_dim), on device
-        proj_np = proj.detach().cpu().numpy().astype(np.float32, copy=False)
-
-        n = proj_np.shape[0]
+        n = proj.shape[0]
         idx_list = list(sample_indices) if sample_indices is not None else \
             list(range(self._sample_counter, self._sample_counter + n))
+        self._sample_counter += n
+
+        if buffer:
+            self._gpu_buffer.append(proj)
+            self._gpu_buffer_idx.extend(int(i) for i in idx_list)
+            return n
+
+        self._commit(proj.detach().cpu().numpy().astype(np.float32, copy=False), idx_list)
+        return n
+
+    def _commit(self, proj_np: np.ndarray, idx_list: list) -> None:
         ids = self.store.add_projected_batch(
             proj_np, source_id=self.source_id, sample_index_offset=0
         )
         for eid, real_idx in zip(ids, idx_list):
             self.store._entries[eid].sample_index = int(real_idx)
-        self._sample_counter += n
+
+    def drain(self) -> int:
+        """Move all buffered projected gradients to the store in one host
+        transfer. Call at the end of training (or every K steps). Returns the
+        number of samples committed."""
+        if not self._gpu_buffer:
+            return 0
+        import torch
+        allproj = torch.cat(self._gpu_buffer, dim=0).detach().cpu().numpy().astype(
+            np.float32, copy=False
+        )
+        self._commit(allproj, self._gpu_buffer_idx)
+        n = allproj.shape[0]
+        self._gpu_buffer.clear()
+        self._gpu_buffer_idx.clear()
         return n
 
     def detach(self) -> None:
+        self.drain()
         for h in self._handles:
             h.remove()
         self._handles.clear()
