@@ -104,20 +104,24 @@ def run(args):
         sync()
         return time.perf_counter() - t0
 
-    # warmup (build projection matrix + allocator growth outside timing)
-    _, warm = build_logger()
-    pass_over(use_logger=True, do_opt=True, logger=warm)
-    grad_dim = warm.grad_dim
-    warm.detach()
-    pass_over(use_logger=False, do_opt=True)
+    # Build ONE logger and warm it: the projection-matrix construction (a large
+    # one-time multinomial) and allocator growth must happen OUTSIDE every timed
+    # region. In a real deployment this matrix is built once at setup and
+    # amortised over the whole run — charging it per-repeat would inflate the
+    # inline marginal (which is otherwise small) into meaninglessness. The same
+    # warmed logger is reused for both the inline and post-hoc measurements.
+    store, logger = build_logger()
+    pass_over(use_logger=True, do_opt=True, logger=logger)  # builds proj matrix
+    grad_dim = logger.grad_dim
+    stored_dim = store._proj_dim
+    n_per_pass = n_batches * args.batch
+    pass_over(use_logger=False, do_opt=True)  # warm baseline
 
     # --- inline marginal cost: interleave (train) vs (train+log), R repeats ---
     marginals, base_train_times = [], []
     for _ in range(args.repeats):
         t_base = pass_over(use_logger=False, do_opt=True)
-        store, logger = build_logger()
         t_inline = pass_over(use_logger=True, do_opt=True, logger=logger)
-        logger.detach()
         marginals.append(t_inline - t_base)
         base_train_times.append(t_base)
     inline_marginal = statistics.median(marginals)
@@ -126,14 +130,12 @@ def run(args):
     # --- post-hoc extraction pass: dedicated sweep, no optimizer, R repeats ---
     posthoc_times = []
     for _ in range(args.repeats):
-        store, logger = build_logger()
         t_ph = pass_over(use_logger=True, do_opt=False, logger=logger)
-        stored_dim = store._proj_dim
-        n_logged = len(store)
-        logger.detach()
         posthoc_times.append(t_ph)
     posthoc = statistics.median(posthoc_times)
     posthoc_std = statistics.pstdev(posthoc_times) if len(posthoc_times) > 1 else 0.0
+    logger.detach()
+    n_logged = n_per_pass  # store size for ONE pass over the dataset (not accumulated)
 
     base_train = statistics.median(base_train_times)
     store_bytes = n_logged * stored_dim * 4
