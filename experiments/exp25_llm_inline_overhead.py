@@ -216,47 +216,65 @@ def run(args):
         )
         return store, targets, logger
 
-    def warm_logger(logger, n):
-        """Run n untimed steps with the logger so the projection matrix build
-        and allocator growth happen *outside* the timed region."""
-        for step in range(n):
+    # Build one logger and warm it (projection-matrix build, allocator growth
+    # happen outside all timed regions). Reused across every measurement repeat.
+    store, targets, logger = build_logger()
+    for step in range(args.warmup):  # warm instrumented path
+        opt.zero_grad(set_to_none=True)
+        loss_fn().backward()
+        logger.flush_step(sample_indices=range(step * args.batch, (step + 1) * args.batch))
+        opt.step()
+    sync()
+    grad_dim = logger.grad_dim
+    train_steps(args.warmup)  # warm baseline path
+
+    def block(use_logger, per_step_sync):
+        """Total wall-clock for args.steps steps. Interleaved A/B blocks below
+        share the same GPU thermal/clock state, so drift cancels in the ratio."""
+        sync()
+        t0 = time.perf_counter()
+        for step in range(args.steps):
             opt.zero_grad(set_to_none=True)
             loss_fn().backward()
-            logger.flush_step(sample_indices=range(step * args.batch, (step + 1) * args.batch))
+            if use_logger:
+                logger.flush_step(
+                    sample_indices=range(step * args.batch, (step + 1) * args.batch),
+                    buffer=not per_step_sync,
+                )
             opt.step()
+            if per_step_sync:
+                sync()
+        if use_logger and not per_step_sync:
+            logger.drain()  # single host transfer, inside the timed region
         sync()
+        return time.perf_counter() - t0
 
-    # warmup baseline (compile caches, cudnn autotune, allocator) — excluded from timing
-    train_steps(args.warmup)
+    def measure(per_step_sync):
+        """Interleaved, repeated overhead measurement → (median%, std%, base_s)."""
+        overheads, base_times = [], []
+        for _ in range(args.repeats):
+            b = block(False, per_step_sync)
+            i = block(True, per_step_sync)
+            overheads.append((i - b) / b * 100.0)
+            base_times.append(b)
+        med = statistics.median(overheads)
+        std = statistics.pstdev(overheads) if len(overheads) > 1 else 0.0
+        return med, std, statistics.median(base_times), overheads
 
-    # ---- conservative: per-step-synced medians ----
-    base_times, base_total = train_steps(args.steps, per_step_sync=True)
-    store, targets, logger = build_logger()
-    warm_logger(logger, args.warmup)
-    inst_times, inst_total = train_steps(args.steps, logger=logger, per_step_sync=True)
-    grad_dim = logger.grad_dim
-    logger.detach()
-
-    # ---- headline: realistic throughput (overlap allowed, one sync/run) ----
-    base_tp_times, base_tp = train_steps(args.steps, per_step_sync=False)
-    store, targets, logger = build_logger()
-    warm_logger(logger, args.warmup)
-    _, inst_tp = train_steps(args.steps, logger=logger, per_step_sync=False)
+    synced_med, synced_std, synced_base, synced_all = measure(per_step_sync=True)
+    thru_med, thru_std, thru_base, thru_all = measure(per_step_sync=False)
     logger.detach()
 
     stored_dim = store._proj_dim  # sketch_dim if factored, else proj_dim
     store_bytes = len(store) * stored_dim * 4  # float32
-
-    base_med = statistics.median(base_times)
-    inst_med = statistics.median(inst_times)
-    overhead = (inst_med - base_med) / base_med * 100.0
-    throughput_overhead = (inst_tp - base_tp) / base_tp * 100.0
+    base_step_ms = synced_base / args.steps * 1e3
 
     result = {
         "backend": args.backend,
         "model": args.model if args.backend == "hf" else "tiny-gpt",
         "device": device,
         "steps": args.steps,
+        "repeats": args.repeats,
         "batch": args.batch,
         "seq": args.seq,
         "rank": args.rank,
@@ -269,14 +287,13 @@ def run(args):
         "samples_logged": len(store),
         "store_bytes": store_bytes,
         "store_mb": round(store_bytes / 1e6, 3),
-        "baseline_median_s": round(base_med, 6),
-        "instrumented_median_s": round(inst_med, 6),
-        "overhead_pct": round(overhead, 3),
-        "baseline_throughput_s": round(base_tp, 6),
-        "instrumented_throughput_s": round(inst_tp, 6),
-        "throughput_overhead_pct": round(throughput_overhead, 3),
-        "baseline_mean_s": round(statistics.mean(base_times), 6),
-        "instrumented_mean_s": round(statistics.mean(inst_times), 6),
+        "base_step_ms": round(base_step_ms, 3),
+        "overhead_pct": round(synced_med, 3),          # synced median (conservative)
+        "overhead_std": round(synced_std, 3),
+        "overhead_samples": [round(x, 3) for x in synced_all],
+        "throughput_overhead_pct": round(thru_med, 3),  # overlap (realistic)
+        "throughput_overhead_std": round(thru_std, 3),
+        "throughput_samples": [round(x, 3) for x in thru_all],
     }
     print(json.dumps(result, indent=2))
 
@@ -296,6 +313,8 @@ def main():
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--steps", type=int, default=40)
     ap.add_argument("--warmup", type=int, default=5)
+    ap.add_argument("--repeats", type=int, default=5,
+                    help="interleaved A/B measurement repeats for error bars")
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--seq", type=int, default=64)
     ap.add_argument("--rank", type=int, default=8)
