@@ -61,7 +61,12 @@ def load_sst2(n_train, n_test, seq, model_name, seed):
     tok = AutoTokenizer.from_pretrained(model_name)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-    ds = load_dataset("glue", "sst2")
+    # Legacy load_dataset("glue","sst2") uses a dataset *script* that breaks with
+    # newer huggingface_hub URI parsing. Use namespaced data-only repos instead.
+    try:
+        ds = load_dataset("nyu-mll/glue", "sst2")
+    except Exception:
+        ds = load_dataset("stanfordnlp/sst2")
     rng = np.random.default_rng(seed)
     tr = ds["train"].shuffle(seed=seed).select(range(n_train))
     te = ds["validation"].select(range(min(n_test, len(ds["validation"]))))
