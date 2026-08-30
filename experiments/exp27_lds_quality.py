@@ -172,8 +172,13 @@ def run(args):
     torch.manual_seed(args.seed)
 
     # ---- data ----
-    if args.backend == "tiny":
-        vocab = args.vocab
+    # `--data synthetic` makes the label a token-count rule the pretrained model
+    # has never seen, so LoRA must learn it FROM the fine-tuning data → training
+    # examples are genuinely influential → LDS has signal. `--data sst2` uses a
+    # task GPT-2 can largely solve from pretraining, where attribution is
+    # intrinsically weak (a documented hard regime for pretrained fine-tuning).
+    if args.backend == "tiny" or args.data == "synthetic":
+        vocab = args.vocab if args.backend == "tiny" else 1000
         Xtr, ytr = synthetic_data(args.n_train, args.seq, vocab, args.seed)
         Xte, yte = synthetic_data(args.n_test, args.seq, vocab, args.seed + 1)
     else:
@@ -348,6 +353,8 @@ def run(args):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--backend", choices=["tiny", "hf"], default="tiny")
+    ap.add_argument("--data", choices=["synthetic", "sst2"], default="synthetic",
+                    help="synthetic = learn-from-data token rule (strong LDS); sst2 = real (weak LDS on pretrained)")
     ap.add_argument("--model", default="gpt2")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--n_train", type=int, default=400)
