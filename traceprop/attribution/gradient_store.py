@@ -161,6 +161,40 @@ class GradientStore:
             ids.append(entry.id)
         return ids
 
+    def add_projected_batch(
+        self,
+        proj_gradients: np.ndarray,
+        source_id: Optional[str] = None,
+        sample_index_offset: int = 0,
+        source_node_ids: Optional[list] = None,
+    ) -> list[str]:
+        """Store gradients that are *already* projected to ``proj_dim``.
+
+        Used by the inline LLM logger, which performs the sparse-JL projection
+        on-device (GPU) in the training framework and hands back only the small
+        (n, proj_dim) result — avoiding a per-step host round-trip of the full
+        per-sample gradient. No projection matrix is built here.
+        """
+        if proj_gradients.ndim == 1:
+            proj_gradients = proj_gradients[None, :]
+        n, k = proj_gradients.shape
+        if k != self._proj_dim:
+            raise ValueError(
+                f"add_projected_batch: got proj_dim {k}, store expects {self._proj_dim}"
+            )
+        proj = np.ascontiguousarray(proj_gradients, dtype=np.float32)
+        ids = []
+        for i in range(n):
+            entry = GradientLogEntry(
+                proj_gradient=proj[i],
+                source_node_id=(source_node_ids[i] if source_node_ids else None),
+                source_id=source_id,
+                sample_index=sample_index_offset + i,
+            )
+            self._entries[entry.id] = entry
+            ids.append(entry.id)
+        return ids
+
     def get_projected_matrix(self) -> np.ndarray:
         """Build the full (n_samples, proj_dim) gradient matrix for influence computation."""
         sorted_entries = sorted(self._entries.values(), key=lambda e: e.sample_index)
