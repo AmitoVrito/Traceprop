@@ -101,34 +101,47 @@ def run(args):
     trainable = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.SGD(trainable, lr=1e-3)
 
-    def build_run():
-        run_ = logix.init(project=f"exp31_{os.getpid()}", config="exp31_config.yaml")
+    def build_run(save_to_disk):
+        # logix.init() is a process-level singleton; use LogIX(...) directly so we
+        # can build a second instance for the second (matched-buffering) config.
+        run_ = logix.LogIX(project=f"exp31_{os.getpid()}_{save_to_disk}", config="exp31_config.yaml")
         run_.watch(model, name_filter=tracked_names, type_filter=[nn.Linear])
         run_.setup({"grad": ["log"]})
-        run_.save(False)  # keep logs in memory; don't pay disk I/O in the timing
+        run_.save(save_to_disk)
         return run_
-
-    lrun = build_run()
 
     def sync():
         if device == "cuda":
             torch.cuda.synchronize()
 
-    for step in range(args.warmup):
-        xb, yb, s = batch(step)
-        opt.zero_grad(set_to_none=True)
-        with lrun(data_id=[str(s + i) for i in range(args.batch)]):
-            loss_fn(xb, yb).backward()
-        opt.step()
-    sync()
+    def reset_peak_mem():
+        if device == "cuda":
+            torch.cuda.reset_peak_memory_stats()
 
-    def block(use_logix):
+    def peak_mem_mb():
+        if device != "cuda":
+            return None
+        return torch.cuda.max_memory_allocated() / 1024 ** 2
+
+    def warmup(lrun, use_logix):
+        for step in range(args.warmup):
+            xb, yb, s = batch(step)
+            opt.zero_grad(set_to_none=True)
+            if use_logix and lrun is not None:
+                with lrun(data_id=[str(s + i) for i in range(args.batch)]):
+                    loss_fn(xb, yb).backward()
+            else:
+                loss_fn(xb, yb).backward()
+            opt.step()
+        sync()
+
+    def block(lrun, use_logix):
         sync()
         t0 = time.perf_counter()
         for step in range(args.steps):
             xb, yb, s = batch(step)
             opt.zero_grad(set_to_none=True)
-            if use_logix:
+            if use_logix and lrun is not None:
                 with lrun(data_id=[str(s + i) for i in range(args.batch)]):
                     loss_fn(xb, yb).backward()
             else:
@@ -137,16 +150,45 @@ def run(args):
         sync()
         return time.perf_counter() - t0
 
-    overheads, base_times = [], []
-    for _ in range(args.repeats):
-        b = block(False)
-        i = block(True)
-        overheads.append((i - b) / b * 100.0)
-        base_times.append(b)
+    def measure(save_to_disk):
+        """One full interleaved measurement (baseline vs LogIX), matched
+        warmup/reps/sync policy, at a given LogIX disk-flush setting."""
+        lrun = build_run(save_to_disk)
+        warmup(lrun, use_logix=True)
 
-    med = statistics.median(overheads)
-    std = statistics.pstdev(overheads) if len(overheads) > 1 else 0.0
-    base_step_ms = statistics.median(base_times) / args.steps * 1e3
+        overheads, base_times = [], []
+        base_peak_mb, logix_peak_mb = [], []
+        for _ in range(args.repeats):
+            reset_peak_mem()
+            b = block(lrun, use_logix=False)
+            base_peak_mb.append(peak_mem_mb())
+            reset_peak_mem()
+            i = block(lrun, use_logix=True)
+            logix_peak_mb.append(peak_mem_mb())
+            overheads.append((i - b) / b * 100.0)
+            base_times.append(b)
+
+        med = statistics.median(overheads)
+        std = statistics.pstdev(overheads) if len(overheads) > 1 else 0.0
+        base_step_ms = statistics.median(base_times) / args.steps * 1e3
+        return {
+            "save_to_disk": save_to_disk,
+            "base_step_ms": round(base_step_ms, 4),
+            "overhead_pct_median": round(med, 3),
+            "overhead_pct_std": round(std, 3),
+            "overhead_samples": [round(x, 3) for x in overheads],
+            "peak_mem_mb_baseline": round(statistics.median([m for m in base_peak_mb if m]), 2) if device == "cuda" else None,
+            "peak_mem_mb_logix": round(statistics.median([m for m in logix_peak_mb if m]), 2) if device == "cuda" else None,
+        }
+
+    # Two configurations, per the fairness protocol: LogIX's own default
+    # (writes to disk as it goes) and a matched-buffering config (kept in
+    # memory, comparable to LoRAGradientLogger's buffer=True/drain()).
+    configs = {}
+    print("[exp31] measuring LogIX default (save_to_disk=True) ...")
+    configs["logix_default_disk"] = measure(save_to_disk=True)
+    print("[exp31] measuring LogIX matched-buffering (save_to_disk=False) ...")
+    configs["matched_buffering"] = measure(save_to_disk=False)
 
     out = {
         "tool": "logix (logix-project/logix)",
@@ -155,13 +197,13 @@ def run(args):
         "device": device,
         "tracked_modules_count": len(tracked_names),
         "track_last_n_blocks": args.track,
-        "steps": args.steps, "repeats": args.repeats,
-        "base_step_ms": round(base_step_ms, 4),
-        "overhead_pct_median": round(med, 3),
-        "overhead_pct_std": round(std, 3),
-        "overhead_samples": [round(x, 3) for x in overheads],
+        "steps": args.steps, "repeats": args.repeats, "warmup": args.warmup,
+        "configs": configs,
         "note": "directly comparable to exp25/exp30's LoRAGradientLogger overhead numbers "
-                "(same model, scope, batch/seq, interleaved-block timing methodology).",
+                "(same model, scope, batch/seq, interleaved-block timing methodology). "
+                "bytes-per-example and LDS-on-LogIX are not yet measured here -- see "
+                "docs/mlsys note on exp31 known gaps before treating this as the final "
+                "fairness-locked comparison.",
     }
     print(json.dumps(out, indent=2))
     os.makedirs("results", exist_ok=True)
@@ -184,7 +226,7 @@ def main():
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--track", type=int, default=1)
     ap.add_argument("--steps", type=int, default=20)
-    ap.add_argument("--warmup", type=int, default=5)
+    ap.add_argument("--warmup", type=int, default=10)
     ap.add_argument("--repeats", type=int, default=20)
     args = ap.parse_args()
     run(args)

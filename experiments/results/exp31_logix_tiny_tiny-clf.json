@@ -5,17 +5,36 @@
   "device": "cpu",
   "tracked_modules_count": 13,
   "track_last_n_blocks": 1,
-  "steps": 10,
-  "repeats": 5,
-  "base_step_ms": 16.1475,
-  "overhead_pct_median": 17.649,
-  "overhead_pct_std": 6.852,
-  "overhead_samples": [
-    1.247,
-    16.106,
-    18.016,
-    20.364,
-    17.649
-  ],
-  "note": "directly comparable to exp25/exp30's LoRAGradientLogger overhead numbers (same model, scope, batch/seq, interleaved-block timing methodology)."
+  "steps": 5,
+  "repeats": 3,
+  "warmup": 3,
+  "configs": {
+    "logix_default_disk": {
+      "save_to_disk": true,
+      "base_step_ms": 15.8313,
+      "overhead_pct_median": 27.108,
+      "overhead_pct_std": 9.891,
+      "overhead_samples": [
+        41.832,
+        27.108,
+        17.806
+      ],
+      "peak_mem_mb_baseline": null,
+      "peak_mem_mb_logix": null
+    },
+    "matched_buffering": {
+      "save_to_disk": false,
+      "base_step_ms": 18.185,
+      "overhead_pct_median": 10.526,
+      "overhead_pct_std": 5.983,
+      "overhead_samples": [
+        10.526,
+        6.405,
+        20.645
+      ],
+      "peak_mem_mb_baseline": null,
+      "peak_mem_mb_logix": null
+    }
+  },
+  "note": "directly comparable to exp25/exp30's LoRAGradientLogger overhead numbers (same model, scope, batch/seq, interleaved-block timing methodology). bytes-per-example and LDS-on-LogIX are not yet measured here -- see docs/mlsys note on exp31 known gaps before treating this as the final fairness-locked comparison."
 }

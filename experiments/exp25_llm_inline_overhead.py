@@ -312,8 +312,8 @@ def main():
     ap.add_argument("--model", default="gpt2")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--steps", type=int, default=40)
-    ap.add_argument("--warmup", type=int, default=5)
-    ap.add_argument("--repeats", type=int, default=5,
+    ap.add_argument("--warmup", type=int, default=10)
+    ap.add_argument("--repeats", type=int, default=20,
                     help="interleaved A/B measurement repeats for error bars")
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--seq", type=int, default=64)
