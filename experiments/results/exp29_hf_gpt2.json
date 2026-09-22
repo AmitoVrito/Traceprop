@@ -1,0 +1,35 @@
+{
+  "backend": "hf",
+  "model": "gpt2",
+  "device": "cuda",
+  "n_train": 1000,
+  "n_test": 200,
+  "n_subsets": 500,
+  "subset_frac": 0.5,
+  "epochs": 3,
+  "proj_dim": 256,
+  "track_last_n_blocks": 1,
+  "target_test_acc": 0.815,
+  "lds": {
+    "final_dot": {
+      "mean": 0.0314,
+      "std": 0.0668
+    },
+    "final_trak": {
+      "mean": 0.097,
+      "std": 0.0507
+    },
+    "inline_dot": {
+      "mean": 0.0871,
+      "std": 0.0489
+    },
+    "inline_trak": {
+      "mean": 0.1735,
+      "std": 0.0661
+    },
+    "random": {
+      "mean": 0.0062,
+      "std": 0.05
+    }
+  }
+}
