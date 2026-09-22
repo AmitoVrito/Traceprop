@@ -202,10 +202,16 @@ def run(args):
             print(f"  subset {m + 1}/{args.n_subsets}")
 
     def lds_for(attr):
+        """Returns (mean, std, per_example_r) -- per_example_r has one Spearman r
+        per test example (NaNs dropped), aligned to the same test-example order
+        across every condition, so paired conditions can be bootstrapped later
+        without retraining."""
         pred = masks @ attr.T
         rs = [spearmanr(pred[:, i], margins[:, i]).correlation for i in range(n_test)]
-        rs = [r for r in rs if not np.isnan(r)]
-        return float(np.mean(rs)), float(np.std(rs))
+        rs_arr = np.array(rs, dtype=np.float64)
+        valid = ~np.isnan(rs_arr)
+        rs_clean = rs_arr[valid]
+        return float(np.mean(rs_clean)), float(np.std(rs_clean)), rs_arr
 
     def dot_scores(gtr, gte):
         return gte @ gtr.T
@@ -217,11 +223,16 @@ def run(args):
         return gte @ np.linalg.solve(H, gtr.T)
 
     results = {}
+    per_example_r = {}
     for name, gtr in (("final", G_final), ("inline", G_inline)):
-        results[f"{name}_dot"] = lds_for(dot_scores(gtr, G_test))
-        results[f"{name}_trak"] = lds_for(trak_scores(gtr, G_test))
+        for est_name, scorer in (("dot", dot_scores), ("trak", trak_scores)):
+            mean, std, rs_arr = lds_for(scorer(gtr, G_test))
+            results[f"{name}_{est_name}"] = (mean, std)
+            per_example_r[f"{name}_{est_name}"] = rs_arr
     rng2 = np.random.default_rng(0)
-    results["random"] = lds_for(rng2.standard_normal((n_test, n_train)).astype(np.float32))
+    mean, std, rs_arr = lds_for(rng2.standard_normal((n_test, n_train)).astype(np.float32))
+    results["random"] = (mean, std)
+    per_example_r["random"] = rs_arr
 
     out = {
         "backend": args.backend,
@@ -239,10 +250,23 @@ def run(args):
     print(json.dumps(out, indent=2))
 
     os.makedirs("results", exist_ok=True)
-    fn = f"results/exp29_{args.backend}_{out['model'].replace('/', '_')}.json"
+    tag = f"{args.backend}_{out['model'].replace('/', '_')}"
+    fn = f"results/exp29_{tag}.json"
     with open(fn, "w") as f:
         json.dump(out, f, indent=2)
     print(f"\nsaved -> {fn}")
+
+    # Raw per-test-example Spearman r, one row per condition, aligned across
+    # conditions (same test-example order) -- enables a paired bootstrap over
+    # test examples without retraining. Also save masks/margins so a
+    # bootstrap over subsets is possible too.
+    npz_fn = f"results/exp29_{tag}_raw.npz"
+    np.savez(
+        npz_fn,
+        masks=masks, margins=margins,
+        **{f"r_{k}": v for k, v in per_example_r.items()},
+    )
+    print(f"saved -> {npz_fn} (per-example scores for paired bootstrap)")
     return out
 
 
