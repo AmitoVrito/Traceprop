@@ -1,0 +1,37 @@
+[
+  {
+    "d": 128,
+    "n_blocks": 2,
+    "baseline_ms": 15.966,
+    "overhead_pct": 24.668,
+    "grad_dim": 36864
+  },
+  {
+    "d": 256,
+    "n_blocks": 2,
+    "baseline_ms": 20.734,
+    "overhead_pct": 64.544,
+    "grad_dim": 73728
+  },
+  {
+    "d": 384,
+    "n_blocks": 4,
+    "baseline_ms": 58.996,
+    "overhead_pct": 65.913,
+    "grad_dim": 221184
+  },
+  {
+    "d": 512,
+    "n_blocks": 6,
+    "baseline_ms": 137.484,
+    "overhead_pct": 49.084,
+    "grad_dim": 442368
+  },
+  {
+    "d": 768,
+    "n_blocks": 6,
+    "baseline_ms": 281.103,
+    "overhead_pct": 18.554,
+    "grad_dim": 663552
+  }
+]

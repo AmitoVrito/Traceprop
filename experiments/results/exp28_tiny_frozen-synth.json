@@ -1,0 +1,26 @@
+{
+  "backend": "tiny",
+  "model": "frozen-synth",
+  "n_train": 800,
+  "n_test": 200,
+  "feat_dim": 64,
+  "n_subsets": 128,
+  "subset_frac": 0.5,
+  "C": 1.0,
+  "proj_dim": 64,
+  "target_test_acc": 0.5,
+  "lds": {
+    "traceprop_ll_dot": {
+      "mean": 0.6052,
+      "std": 0.0824
+    },
+    "traceprop_ll_trak": {
+      "mean": 0.8305,
+      "std": 0.0383
+    },
+    "random": {
+      "mean": 0.0078,
+      "std": 0.0981
+    }
+  }
+}

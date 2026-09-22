@@ -1,0 +1,43 @@
+{
+  "backend": "hf",
+  "model": "gpt2",
+  "device": "cpu",
+  "n_train": 300,
+  "n_test": 80,
+  "n_subsets": 16,
+  "subset_frac": 0.5,
+  "epochs": 5,
+  "proj_dim": 128,
+  "track_last_n_blocks": 1,
+  "target_test_acc": 0.625,
+  "lds": {
+    "head_only_dot": {
+      "mean": -0.0936,
+      "std": 0.27
+    },
+    "head_only_trak": {
+      "mean": 0.1171,
+      "std": 0.2795
+    },
+    "last_block_dot": {
+      "mean": -0.0941,
+      "std": 0.2757
+    },
+    "last_block_trak": {
+      "mean": 0.077,
+      "std": 0.2735
+    },
+    "all_layers_dot": {
+      "mean": -0.088,
+      "std": 0.2615
+    },
+    "all_layers_trak": {
+      "mean": 0.069,
+      "std": 0.2533
+    },
+    "random": {
+      "mean": 0.0712,
+      "std": 0.31
+    }
+  }
+}

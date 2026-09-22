@@ -1,0 +1,43 @@
+{
+  "backend": "tiny",
+  "model": "tiny-clf",
+  "device": "cpu",
+  "n_train": 400,
+  "n_test": 60,
+  "n_subsets": 32,
+  "subset_frac": 0.5,
+  "epochs": 3,
+  "proj_dim": 128,
+  "track_last_n_blocks": 1,
+  "target_test_acc": 0.7,
+  "lds": {
+    "head_only_dot": {
+      "mean": 0.4998,
+      "std": 0.1327
+    },
+    "head_only_trak": {
+      "mean": 0.5165,
+      "std": 0.1393
+    },
+    "last_block_dot": {
+      "mean": 0.5119,
+      "std": 0.1359
+    },
+    "last_block_trak": {
+      "mean": 0.4438,
+      "std": 0.1365
+    },
+    "all_layers_dot": {
+      "mean": 0.4998,
+      "std": 0.1327
+    },
+    "all_layers_trak": {
+      "mean": 0.5165,
+      "std": 0.1393
+    },
+    "random": {
+      "mean": -0.014,
+      "std": 0.1658
+    }
+  }
+}

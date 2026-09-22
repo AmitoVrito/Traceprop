@@ -1,0 +1,26 @@
+{
+  "backend": "hf",
+  "model": "gpt2",
+  "n_train": 1500,
+  "n_test": 300,
+  "feat_dim": 768,
+  "n_subsets": 256,
+  "subset_frac": 0.5,
+  "C": 0.5,
+  "proj_dim": 512,
+  "target_test_acc": 0.7333,
+  "lds": {
+    "traceprop_ll_dot": {
+      "mean": 0.25,
+      "std": 0.0768
+    },
+    "traceprop_ll_trak": {
+      "mean": 0.4472,
+      "std": 0.0553
+    },
+    "random": {
+      "mean": 0.0098,
+      "std": 0.0671
+    }
+  }
+}

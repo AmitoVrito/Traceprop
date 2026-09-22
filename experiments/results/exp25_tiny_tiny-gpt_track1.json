@@ -1,0 +1,38 @@
+{
+  "backend": "tiny",
+  "model": "tiny-gpt",
+  "device": "cpu",
+  "steps": 30,
+  "repeats": 5,
+  "batch": 8,
+  "seq": 48,
+  "rank": 8,
+  "proj_dim": 512,
+  "factored": false,
+  "stored_dim": 512,
+  "track_last_n_blocks": 1,
+  "n_tracked_layers": 12,
+  "per_sample_grad_dim": 55296,
+  "samples_logged": 2464,
+  "store_bytes": 5046272,
+  "store_mb": 5.046,
+  "base_step_ms": 60.997,
+  "overhead_pct": 13.621,
+  "overhead_std": 2.143,
+  "overhead_samples": [
+    15.383,
+    10.822,
+    13.327,
+    17.223,
+    13.621
+  ],
+  "throughput_overhead_pct": 12.238,
+  "throughput_overhead_std": 4.722,
+  "throughput_samples": [
+    12.911,
+    12.238,
+    8.533,
+    22.475,
+    11.426
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "backend": "tiny",
+  "model": "tiny-gpt",
+  "device": "cpu",
+  "steps": 25,
+  "batch": 8,
+  "seq": 64,
+  "rank": 8,
+  "proj_dim": 512,
+  "track_last_n_blocks": 1,
+  "n_tracked_layers": 12,
+  "per_sample_grad_dim": 73728,
+  "samples_logged": 200,
+  "store_bytes": 409600,
+  "store_mb": 0.41,
+  "baseline_median_s": 0.213336,
+  "instrumented_median_s": 0.226209,
+  "overhead_pct": 6.034,
+  "baseline_mean_s": 0.210966,
+  "instrumented_mean_s": 0.256856
+}
