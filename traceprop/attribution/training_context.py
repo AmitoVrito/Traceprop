@@ -1,6 +1,9 @@
 """
-Context manager that hooks into a training loop and logs per-sample gradients.
-Supports PyTorch natively. NumPy and JAX require manual gradient passing.
+Context manager that hooks into a training loop and logs gradients for later
+attribution. step() logs one batch-mean gradient per call (Traceprop-BM); for
+per-example gradients (Traceprop-LL), compute them manually and pass them to
+log_gradient() per sample. Supports PyTorch natively. NumPy and JAX require
+manual gradient passing.
 """
 from __future__ import annotations
 
@@ -21,7 +24,9 @@ def _active_gradient_store() -> Optional[GradientStore]:
 
 
 class TrainingContext:
-    """Wraps a training loop to record per-sample gradients for later attribution.
+    """Wraps a training loop to record batch-mean gradients for later attribution
+    (Traceprop-BM). Use log_gradient() directly with manually computed per-example
+    gradients for Traceprop-LL.
 
     Supports context manager protocol::
 
@@ -71,7 +76,8 @@ class TrainingContext:
         sample_indices: Optional[list[int]] = None,
         source_node_ids: Optional[list[int]] = None,
     ) -> None:
-        """Call after computing loss for a batch. Extracts and logs per-sample gradients.
+        """Call after computing loss for a batch. Extracts and logs one batch-mean
+        gradient (Traceprop-BM), stored under the batch's first sample index.
 
         Requires PyTorch. For other frameworks, use log_gradient() directly.
         """

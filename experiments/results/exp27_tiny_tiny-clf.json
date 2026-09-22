@@ -4,40 +4,40 @@
   "device": "cpu",
   "n_train": 400,
   "n_test": 60,
-  "n_subsets": 32,
+  "n_subsets": 500,
   "subset_frac": 0.5,
   "epochs": 3,
   "proj_dim": 128,
   "track_last_n_blocks": 1,
-  "target_test_acc": 0.7,
+  "target_test_acc": 0.6167,
   "lds": {
     "head_only_dot": {
-      "mean": 0.4998,
-      "std": 0.1327
+      "mean": 0.6544,
+      "std": 0.0601
     },
     "head_only_trak": {
-      "mean": 0.5165,
-      "std": 0.1393
+      "mean": 0.457,
+      "std": 0.055
     },
     "last_block_dot": {
-      "mean": 0.5119,
-      "std": 0.1359
+      "mean": 0.6603,
+      "std": 0.0602
     },
     "last_block_trak": {
-      "mean": 0.4438,
-      "std": 0.1365
+      "mean": 0.4319,
+      "std": 0.0548
     },
     "all_layers_dot": {
-      "mean": 0.4998,
-      "std": 0.1327
+      "mean": 0.6625,
+      "std": 0.0599
     },
     "all_layers_trak": {
-      "mean": 0.5165,
-      "std": 0.1393
+      "mean": 0.3723,
+      "std": 0.0524
     },
     "random": {
-      "mean": -0.014,
-      "std": 0.1658
+      "mean": -0.0184,
+      "std": 0.0635
     }
   }
 }

@@ -1,0 +1,35 @@
+{
+  "backend": "tiny",
+  "model": "tiny-clf",
+  "device": "cpu",
+  "n_train": 400,
+  "n_test": 100,
+  "n_subsets": 500,
+  "subset_frac": 0.5,
+  "epochs": 3,
+  "proj_dim": 512,
+  "track_last_n_blocks": 1,
+  "target_test_acc": 0.71,
+  "lds": {
+    "final_dot": {
+      "mean": 0.6511,
+      "std": 0.0639
+    },
+    "final_trak": {
+      "mean": 0.3654,
+      "std": 0.0598
+    },
+    "inline_dot": {
+      "mean": 0.7017,
+      "std": 0.0644
+    },
+    "inline_trak": {
+      "mean": 0.108,
+      "std": 0.0429
+    },
+    "random": {
+      "mean": 0.0078,
+      "std": 0.0595
+    }
+  }
+}
