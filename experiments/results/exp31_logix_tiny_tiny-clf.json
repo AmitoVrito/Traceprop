@@ -1,0 +1,21 @@
+{
+  "tool": "logix (logix-project/logix)",
+  "backend": "tiny",
+  "model": "tiny-clf",
+  "device": "cpu",
+  "tracked_modules_count": 13,
+  "track_last_n_blocks": 1,
+  "steps": 10,
+  "repeats": 5,
+  "base_step_ms": 16.1475,
+  "overhead_pct_median": 17.649,
+  "overhead_pct_std": 6.852,
+  "overhead_samples": [
+    1.247,
+    16.106,
+    18.016,
+    20.364,
+    17.649
+  ],
+  "note": "directly comparable to exp25/exp30's LoRAGradientLogger overhead numbers (same model, scope, batch/seq, interleaved-block timing methodology)."
+}
