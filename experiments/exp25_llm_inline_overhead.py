@@ -116,11 +116,13 @@ def tiny_batch(vocab, seq, batch, device):
 # --------------------------------------------------------------------------
 # HuggingFace GPT-2 / Pythia + PEFT LoRA
 # --------------------------------------------------------------------------
-def build_hf_model(model_name: str, r: int = 8):
+def build_hf_model(model_name: str, r: int = 8, dtype: str = "fp32"):
+    import torch
     from transformers import AutoModelForCausalLM
     from peft import LoraConfig, get_peft_model
 
-    base = AutoModelForCausalLM.from_pretrained(model_name)
+    torch_dtype = {"fp32": torch.float32, "bf16": torch.bfloat16, "fp16": torch.float16}[dtype]
+    base = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch_dtype)
     # GPT-2 uses Conv1D 'c_attn'; Pythia/NeoX use 'query_key_value'. Cover both.
     target = ["c_attn", "c_proj"] if "gpt2" in model_name else ["query_key_value", "dense"]
     cfg = LoraConfig(r=r, lora_alpha=2 * r, target_modules=target, task_type="CAUSAL_LM")
@@ -153,7 +155,7 @@ def run(args):
         )
         x = tiny_batch(vocab, seq, args.batch, device)
     else:
-        model = build_hf_model(args.model, r=args.rank)
+        model = build_hf_model(args.model, r=args.rank, dtype=args.dtype)
         x = hf_batch(args.model, args.seq, args.batch, device)
     model = model.to(device)
 
@@ -272,6 +274,7 @@ def run(args):
     result = {
         "backend": args.backend,
         "model": args.model if args.backend == "hf" else "tiny-gpt",
+        "dtype": args.dtype,
         "device": device,
         "steps": args.steps,
         "repeats": args.repeats,
@@ -326,6 +329,8 @@ def main():
                     help="use Kronecker-factored sketch (cheaper/step, lower quality/dim)")
     ap.add_argument("--kfac", type=int, default=16, help="factored sketch width per factor")
     ap.add_argument("--proj_dim", type=int, default=2048)
+    ap.add_argument("--dtype", choices=["fp32", "bf16", "fp16"], default="fp32",
+                    help="model dtype (hf backend only); use bf16 for large models (e.g. Pythia-2.8B) on 24GB GPUs")
     args = ap.parse_args()
     run(args)
 
