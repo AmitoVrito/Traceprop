@@ -95,8 +95,41 @@ def assert_pca_init_took_effect(run_, requested_init: str):
         )
 
 
+def measure_logix_bytes_per_example(run_, n_examples):
+    """Actual on-disk bytes/example, NOT an analytical rank^2*4*n_layers
+    estimate. The earlier analytical formula was wrong in a way that only
+    showed up when cross-checked: LoraLinear clamps
+    rank=min(requested_rank, in_features, out_features), and the
+    REQUESTED rank was being reported/used for the "matched storage" math,
+    not the actual (possibly-clamped) rank LogIX applied -- e.g. requesting
+    rank=16 against a scope where every tracked module's smaller dimension
+    is 8 actually yields an 8x8 core everywhere, not 16x16, silently making
+    every downstream "storage-matched" proj_dim wrong. Measuring the real
+    serialized log size sidesteps needing to know the effective rank at all.
+
+    Call AFTER run_.finalize() (flushes the LogSaver's buffer to disk) and
+    AFTER the real logging pass over n_examples has completed -- reads
+    every "log_*.mmap" chunk file's size directly from run_.log_dir. Returns
+    bytes/example as a float (whole-directory .mmap total / n_examples);
+    metadata JSON files are excluded (small, fixed per-chunk overhead, not
+    part of the per-example gradient payload)."""
+    import glob
+    import os
+
+    mmap_files = glob.glob(os.path.join(run_.log_dir, "log_*.mmap"))
+    if not mmap_files:
+        raise RuntimeError(
+            f"measure_logix_bytes_per_example: no log_*.mmap files found in "
+            f"{run_.log_dir} -- was save(True) active and finalize() called "
+            f"before this, over a real logging pass?"
+        )
+    total_bytes = sum(os.path.getsize(f) for f in mmap_files)
+    return total_bytes / n_examples
+
+
 def validate_logix_gradients(run_, model, tracked_names, xb, yb, loss_fn,
-                              data_id, min_cosine=0.9999, check_examples=None):
+                              data_id, min_cosine=0.9999, check_examples=None,
+                              max_scale_nonuniformity=1.01):
     """Hard assert: LogIX's logged per-example gradients must match direct
     autograd on the SAME forward pass, to the same cosine >= 0.9999 standard
     Traceprop's own per-sample gradients are held to
@@ -119,13 +152,21 @@ def validate_logix_gradients(run_, model, tracked_names, xb, yb, loss_fn,
     proxy, tracked-module scope), not something to run every repeat.
 
     Does NOT assert the per-example gradient's absolute scale matches --
-    only direction (cosine). A uniform global scale factor was observed
-    between LogIX's logged gradients and direct autograd (consistently near
-    2x in spot checks, on both hf and tiny backends, ruling out the .weight
-    proxy as the cause since tiny never uses it) -- root cause not fully
-    pinned down, but it doesn't affect LDS (rank-correlation based) or the
-    validity of this correctness check, since cosine similarity is
-    scale-invariant. Flagged in the return value so callers can report it."""
+    only direction (cosine). A scale factor was observed between LogIX's
+    logged gradients and direct autograd (consistently near 2x in spot
+    checks, on both hf and tiny backends, ruling out the .weight proxy as
+    the cause since tiny never uses it) -- root cause not fully pinned down.
+    A UNIFORM global scale is harmless for LDS (rank-correlation based,
+    scale-invariant) and for concatenated-across-modules dot products (a
+    single scalar factors out of the inner product). A NON-uniform,
+    per-module scale would NOT be harmless -- it would reweight modules
+    relative to each other in the concatenated per-example vector even
+    though each module's own cosine is 1.0, silently corrupting downstream
+    attribution scores. So max_scale_nonuniformity (default 1.01, i.e. the
+    largest and smallest observed per-example scale ratio across ALL
+    checked examples and modules must be within 1%) is asserted as a hard
+    failure condition, on the same footing as the cosine check -- not just
+    reported."""
     import torch
     import torch.nn.functional as F
 
@@ -148,6 +189,7 @@ def validate_logix_gradients(run_, model, tracked_names, xb, yb, loss_fn,
     examples = range(n_examples) if check_examples is None else check_examples
     worst_cosine = float("inf")
     ratios = []
+    ratios_by_module = {n: [] for n in tracked_names}
     for i in examples:
         grads = torch.autograd.grad(loss_per_example[i], params, retain_graph=True)
         for n, g in zip(tracked_names, grads):
@@ -166,7 +208,9 @@ def validate_logix_gradients(run_, model, tracked_names, xb, yb, loss_fn,
                 )
             cos = (true_grad @ logged_grad).item() / (tn * ln)
             worst_cosine = min(worst_cosine, cos)
-            ratios.append(ln / tn)
+            ratio = ln / tn
+            ratios.append(ratio)
+            ratios_by_module[n].append(ratio)
             if cos < min_cosine:
                 raise RuntimeError(
                     f"validate_logix_gradients FAILED: module {n} example {i} "
@@ -175,10 +219,27 @@ def validate_logix_gradients(run_, model, tracked_names, xb, yb, loss_fn,
                     f"match ground truth. Do not trust LogIX numbers from this "
                     f"setup until this is root-caused."
                 )
+
+    if ratios:
+        nonuniformity = max(ratios) / min(ratios)
+        if nonuniformity > max_scale_nonuniformity:
+            per_module_report = {
+                n: (round(min(r), 6), round(max(r), 6)) for n, r in ratios_by_module.items() if r
+            }
+            raise RuntimeError(
+                f"validate_logix_gradients FAILED: LogIX/autograd scale ratio is NOT "
+                f"uniform across modules/examples -- max/min={nonuniformity:.4f} > "
+                f"{max_scale_nonuniformity}. A non-uniform per-module scale silently "
+                f"reweights modules in the concatenated per-example attribution vector "
+                f"even though each module's own cosine is 1.0 -- do not treat this as "
+                f"a harmless global scale. Per-module (min, max) ratio: {per_module_report}"
+            )
+
     return {
         "n_checks": len(ratios),
         "worst_cosine": worst_cosine,
         "scale_ratio_mean": sum(ratios) / len(ratios) if ratios else None,
         "scale_ratio_min": min(ratios) if ratios else None,
         "scale_ratio_max": max(ratios) if ratios else None,
+        "scale_nonuniformity": max(ratios) / min(ratios) if ratios else None,
     }

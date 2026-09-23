@@ -131,41 +131,48 @@ def run(args):
 
     print(f"[exp31] backend={args.backend} tracking {len(tracked_names)} modules")
 
-    # --- Storage matching -------------------------------------------------
-    # Ours: a single dense sparse-JL projection to proj_dim floats, total
-    # args.proj_dim * 4 bytes/example regardless of tracked-layer count.
-    # LogIX: a rank x rank core matrix PER tracked layer (LoraLinear inserts
-    # A: in->rank, B: rank->rank, C: rank->out; the per-example-varying part
-    # is the B core), so its per-example storage is
-    # n_layers * rank^2 * 4 bytes and grows with both rank AND layer count.
-    # Its own default (rank=64) with our 6-layer GPT-2 scope would store
-    # ~96KB/example -- ~48x our 2KB budget -- which would make "LogIX is
-    # slower" partly a "LogIX is doing more work by default" result, not a
-    # mechanism result. Two ways to remove that confound, both run here:
-    #   rank_mode=matched        solve LogIX's rank down to OUR proj_dim budget
-    #   rank_mode=logix_default  leave LogIX at its own default rank (no
-    #                            override); pairs with a SEPARATE exp25 run at
-    #                            --proj_dim reverse_proj_dim (printed below) so
-    #                            Traceprop is grown UP to LogIX's budget instead
+    # --- Storage matching ---------------------------------------------------
+    # LogIX ALWAYS runs at its own natural settings here (no rank override).
+    # An earlier version of this script solved analytically for the rank
+    # that "should" hit our 2KB/example budget (rank^2 * 4 * n_layers) and
+    # set run_.config.lora.rank to that value -- this was wrong in a way that
+    # only showed up when cross-checked: LoraLinear clamps
+    # rank=min(requested_rank, in_features, out_features), and the analytical
+    # formula used the REQUESTED rank, not the (possibly much smaller)
+    # clamped rank LogIX actually applied. Fix: measure the real on-disk
+    # bytes/example directly (measure_logix_bytes_per_example(), below,
+    # after a short natural-settings logging pass), then report the
+    # Traceprop proj_dim that matches THAT measured number -- sidesteps
+    # needing to know the effective rank at all.
     n_tracked_layers = len(tracked_names)
-    our_bytes_per_example = args.proj_dim * 4
-    if args.rank_mode == "matched":
-        matched_rank = max(1, int((our_bytes_per_example / (4 * n_tracked_layers)) ** 0.5))
-        logix_bytes_per_example = n_tracked_layers * (matched_rank ** 2) * 4
-        print(f"[exp31] rank_mode=matched: ours={our_bytes_per_example}B/example "
-              f"({args.proj_dim} floats), LogIX rank set to {matched_rank} for "
-              f"{n_tracked_layers} tracked layers -> {logix_bytes_per_example}B/example "
-              f"(analytical -- not yet verified against LogIX's actual serialized log size)")
-    else:  # logix_default: don't touch LogIX's own rank; report the reverse-match point instead
-        matched_rank = None
-        default_rank = args.logix_default_rank
-        logix_bytes_per_example = n_tracked_layers * (default_rank ** 2) * 4
-        reverse_proj_dim = max(1, logix_bytes_per_example // 4)
-        print(f"[exp31] rank_mode=logix_default: LogIX left at its own default rank="
-              f"{default_rank} for {n_tracked_layers} tracked layers -> "
-              f"{logix_bytes_per_example}B/example. For the reverse-match comparison point, "
-              f"rerun exp25/exp26 with --proj_dim {reverse_proj_dim} "
-              f"({reverse_proj_dim * 4}B/example) to grow Traceprop up to this same budget.")
+
+    def measure_bytes_per_example():
+        """Short, throwaway natural-settings logging pass purely to measure
+        real on-disk bytes/example -- separate from the timed comparison
+        below (which uses save(False)/matched-buffering for clean timing)."""
+        chk_model = build_model()
+        chk_loss_fn = make_loss_fn(chk_model)
+        run_ = logix.LogIX(project=f"exp31_bytes_{os.getpid()}", config="exp31_config.yaml")
+        run_.watch(chk_model, name_filter=tracked_names, type_filter=[nn.Linear])
+        run_.add_lora()  # natural rank (LogIX's own default, no override)
+        run_.setup({"grad": ["log"]})
+        run_.save(True)
+        n_chk = max(4, args.batch)
+        for s in range(0, n_chk, args.batch):
+            xb, yb, off = batch(s // max(args.batch, 1))
+            with run_(data_id=[str(off + i) for i in range(len(xb) if args.backend == "tiny" else xb.shape[0])]):
+                chk_model.zero_grad(set_to_none=True)
+                chk_loss_fn(xb, yb).backward()
+        run_.finalize()
+        from logix_strict import measure_logix_bytes_per_example
+        return measure_logix_bytes_per_example(run_, n_chk)
+
+    logix_bytes_per_example = measure_bytes_per_example()
+    traceprop_proj_dim_to_match = max(1, round(logix_bytes_per_example / 4))
+    print(f"[exp31] LogIX natural settings: measured {logix_bytes_per_example:.1f}B/example "
+          f"on disk for {n_tracked_layers} tracked layers (real serialized size, not an "
+          f"analytical estimate). To match this budget, rerun exp25/exp26/exp29 with "
+          f"--proj_dim {traceprop_proj_dim_to_match} ({traceprop_proj_dim_to_match * 4}B/example).")
 
     validation_stats = []
 
@@ -189,9 +196,8 @@ def run(args):
         run_ = logix.LogIX(project=f"exp31_{os.getpid()}_{save_to_disk}_{init_strategy}",
                             config="exp31_config.yaml")
         run_.config.lora.init = init_strategy
-        if matched_rank is not None:
-            run_.config.lora.rank = matched_rank  # storage-matched, see above
-        # else: leave LogIX's own default rank (LoRAConfig.rank=64) untouched
+        # rank left at LogIX's own natural default (LoRAConfig.rank=64, no
+        # override) -- see the measure_bytes_per_example() note above.
         run_.watch(model, name_filter=tracked_names, type_filter=[nn.Linear])
 
         covariance_pass_s = 0.0
@@ -389,20 +395,17 @@ def run(args):
         "tracked_modules_count": len(tracked_names),
         "track_last_n_blocks": args.track,
         "steps": args.steps, "repeats": args.repeats, "warmup": args.warmup,
-        "rank_mode": args.rank_mode,
         "storage_matching": {
-            "ours_bytes_per_example": our_bytes_per_example,
-            "ours_proj_dim": args.proj_dim,
-            "logix_rank_used": matched_rank if matched_rank is not None else args.logix_default_rank,
-            "logix_rank_overridden": matched_rank is not None,
-            "logix_bytes_per_example_analytical": logix_bytes_per_example,
-            "reverse_match_proj_dim": None if args.rank_mode == "matched" else
-                max(1, logix_bytes_per_example // 4),
-            "note": "analytical (rank^2 * 4 bytes * n_layers), not yet verified against "
-                    "LogIX's actual serialized log file size -- check this on the next run. "
-                    "rank_mode=matched shrinks LogIX to our budget; rank_mode=logix_default "
-                    "leaves LogIX at its own default and reports the proj_dim needed to grow "
-                    "Traceprop up to LogIX's budget instead (the reverse-match point).",
+            "logix_bytes_per_example_measured": round(logix_bytes_per_example, 2),
+            "traceprop_proj_dim_to_match": traceprop_proj_dim_to_match,
+            "note": "LogIX at its own natural settings (no rank override); "
+                    "logix_bytes_per_example_measured is the REAL on-disk serialized size "
+                    "(log_*.mmap files / n_examples), not an analytical rank^2*4*n_layers "
+                    "estimate -- the earlier analytical version was wrong because it used "
+                    "the REQUESTED rank, not LoraLinear's actual "
+                    "min(requested_rank, in_features, out_features)-clamped rank. Rerun "
+                    "exp25/exp26/exp29 with --proj_dim traceprop_proj_dim_to_match for the "
+                    "storage-matched Traceprop-side comparison.",
         },
         "gradient_validation": validation_stats,
         "configs": configs,
@@ -417,7 +420,7 @@ def run(args):
     print(json.dumps(out, indent=2))
     os.makedirs("results", exist_ok=True)
     fn = getattr(args, "out", None) or \
-        f"results/exp31_logix_{args.backend}_{out['model'].replace('/', '_')}_{args.rank_mode}.json"
+        f"results/exp31_logix_{args.backend}_{out['model'].replace('/', '_')}.json"
     if os.path.exists(fn) and not getattr(args, "force", False):
         raise SystemExit(
             f"refusing to overwrite existing {fn}. Pass --out <path> for a different "
@@ -440,23 +443,6 @@ def main():
     ap.add_argument("--rank", type=int, default=8)
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--track", type=int, default=1)
-    ap.add_argument("--proj_dim", type=int, default=512,
-                    help="reference for storage matching -- our proj_dim elsewhere "
-                         "(exp25/exp30 default 512 = 2KB/example); used to solve LogIX's "
-                         "rank down when rank_mode=matched, ignored (informational only) "
-                         "when rank_mode=logix_default")
-    ap.add_argument("--rank_mode", choices=["matched", "logix_default"], default="matched",
-                    help="matched: shrink LogIX's rank to our proj_dim budget (item 1's "
-                         "primary comparison). logix_default: leave LogIX at its own "
-                         "default rank and report the proj_dim needed to grow Traceprop "
-                         "up to LogIX's budget instead (the reverse-match point) -- rerun "
-                         "exp25/exp26 with that --proj_dim separately to get Traceprop's "
-                         "own overhead number at that budget")
-    ap.add_argument("--logix_default_rank", type=int, default=64,
-                    help="LogIX's own default LoRA rank (logix/config.py's LoRAConfig); "
-                         "used only for the logix_bytes_per_example print/report when "
-                         "rank_mode=logix_default (the actual run uses LogIX's real default, "
-                         "this value is just for the printed math to match)")
     ap.add_argument("--steps", type=int, default=20)
     ap.add_argument("--warmup", type=int, default=10)
     ap.add_argument("--repeats", type=int, default=20)

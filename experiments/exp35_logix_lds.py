@@ -1,20 +1,25 @@
 """exp35 -- LDS quality of LogIX's own compressed gradients (item 1, refinement).
 
-exp31 measures LogIX's *speed* at a storage-matched rank. This measures its
-*attribution quality* at the same rank, using LogIX's own official
-compute_influence_all() API (not a hand-extraction of its internal tensors --
-less implementation risk, and it's the API a real user would call).
+exp31 measures LogIX's *speed* at its natural storage footprint. This
+measures its *attribution quality* at that same footprint, using LogIX's own
+official compute_influence_all() API (not a hand-extraction of its internal
+tensors -- less implementation risk, and it's the API a real user would
+call).
 
-Two rank_mode conditions, matching exp31:
-  matched        LogIX's rank solved down to OUR proj_dim budget (2KB/example
-                 by default) -- the primary "does squeezing LogIX to our
-                 storage budget cost it LDS quality" comparison.
-  logix_default  LogIX left at its own default rank (64) -- paired with a
-                 SEPARATE exp27/exp29-style Traceprop run at the matching
-                 larger --proj_dim (printed at the end) for the reverse-match
-                 point: does Traceprop grown UP to LogIX's budget do better?
+Storage matching: LogIX ALWAYS runs at its own natural settings (no rank
+override -- an earlier version solved analytically for a rank meant to hit
+Traceprop's proj_dim budget, which was wrong: LoraLinear clamps
+rank=min(requested, in_features, out_features), so the analytical formula
+used the requested rank, not the actual, possibly much smaller, clamped
+one). Real bytes/example are measured directly from the on-disk log after
+the real training-set logging pass, and Traceprop's own gradients are then
+ALSO recomputed at that matched proj_dim (traceprop_dot_matched /
+traceprop_trak_matched) alongside the default-proj_dim reference
+(traceprop_dot / traceprop_trak), for a genuine storage-matched comparison
+in both directions -- Traceprop is grown or shrunk to LogIX, never the
+reverse.
 
-Within each rank_mode, two LogIX scoring conditions:
+Two LogIX scoring conditions:
   dot            compute_influence_all(mode="dot", precondition=False) --
                  directly analogous to our own dot_scores().
   preconditioned compute_influence_all(mode="dot", precondition=True,
@@ -132,10 +137,11 @@ def run(args):
                 opt.step()
         return model
 
-    def collect_grads_posthoc(model, X, y, patterns, last_n):
-        store = GradientStore(proj_dim=args.proj_dim, seed=42)
+    def collect_grads_posthoc(model, X, y, patterns, last_n, proj_dim=None):
+        proj_dim = proj_dim if proj_dim is not None else args.proj_dim
+        store = GradientStore(proj_dim=proj_dim, seed=42)
         targets = select_lora_linears(model, patterns, last_n_blocks=last_n)
-        lg = LoRAGradientLogger(store, targets, proj_dim=args.proj_dim)
+        lg = LoRAGradientLogger(store, targets, proj_dim=proj_dim)
         n = len(X)
         for s in range(0, n, args.batch):
             xb, yb = X[s:s + args.batch], y[s:s + args.batch]
@@ -156,16 +162,30 @@ def run(args):
     G_test = collect_grads_posthoc(target_model, Xte_t, yte_t, scope_patterns, last_n)
 
     # ---- LogIX setup: same tracked-module scope as exp31 ----
+    # LogIX operates on a SEPARATE deep copy of the trained model, not
+    # target_model itself. add_lora() permanently rewrites the wrapped
+    # modules' forward (result = _linear(x) + compression_path(x)), and
+    # running Traceprop's OWN hook-based LoRAGradientLogger afterward on
+    # that same wrapped model raised a RuntimeError from PyTorch's autograd
+    # (view+inplace conflict between LogIX's backward hooks and Traceprop's)
+    # -- confirmed by hitting it when the matched-proj_dim collect_grads_posthoc
+    # call below first ran on the already-wrapped target_model. Two
+    # independent, unwrapped-vs-wrapped copies of the SAME trained weights
+    # avoids this entirely and keeps Traceprop's own collection (both the
+    # default and the storage-matched proj_dim) untouched by LogIX either way.
+    import copy
+    logix_model = copy.deepcopy(target_model)
+
     if args.backend == "tiny":
         tracked_names = [
-            n for n, m in target_model.named_modules()
+            n for n, m in logix_model.named_modules()
             if isinstance(m, nn.Linear)
-            and (n == "score" or (f"blocks.{len(target_model.blocks) - 1}." in n
+            and (n == "score" or (f"blocks.{len(logix_model.blocks) - 1}." in n
                                    and ("lora_A" in n or "lora_B" in n)))
         ]
     else:
         tracked_names = [
-            n for n, m in target_model.named_modules()
+            n for n, m in logix_model.named_modules()
             if isinstance(m, nn.Linear) and ("lora_A" in n or "lora_B" in n)
         ]
         if args.track > 0:
@@ -178,16 +198,6 @@ def run(args):
             tracked_names = [n for n in tracked_names if block_idx(n) in keep]
 
     n_tracked_layers = len(tracked_names)
-    our_bytes_per_example = args.proj_dim * 4
-    if args.rank_mode == "matched":
-        logix_rank = max(1, int((our_bytes_per_example / (4 * n_tracked_layers)) ** 0.5))
-    else:
-        logix_rank = args.logix_default_rank  # left at LogIX's own default
-    logix_bytes_per_example = n_tracked_layers * (logix_rank ** 2) * 4
-    reverse_proj_dim = max(1, logix_bytes_per_example // 4)
-    print(f"[exp35] rank_mode={args.rank_mode}: LogIX rank={logix_rank} for "
-          f"{n_tracked_layers} tracked layers -> {logix_bytes_per_example}B/example "
-          f"(ours={our_bytes_per_example}B/example at proj_dim={args.proj_dim})")
 
     id_gen_counter = {"n": 0}
 
@@ -196,11 +206,19 @@ def run(args):
         id_gen_counter["n"] += batch_size
         return ids
 
+    # LogIX runs at its own NATURAL settings -- no rank override. An earlier
+    # version solved analytically for a rank meant to hit our proj_dim
+    # budget; this was wrong the same way exp31's was (LoraLinear clamps
+    # rank=min(requested, in_features, out_features), so the analytical
+    # formula used the requested rank, not the actual, possibly much
+    # smaller, clamped one). Real bytes/example are measured directly from
+    # the on-disk log after the real training-set logging pass below
+    # (measure_logix_bytes_per_example()), and Traceprop's own gradients are
+    # then ALSO recomputed at that matched proj_dim for a genuine
+    # apples-to-apples storage-matched LDS comparison.
     run_ = logix.LogIX(project=f"exp35_{os.getpid()}", config="exp31_config.yaml")
-    if args.rank_mode == "matched":
-        run_.config.lora.rank = logix_rank
     run_.config.lora.init = args.lora_init
-    run_.watch(target_model, name_filter=tracked_names, type_filter=[nn.Linear])
+    run_.watch(logix_model, name_filter=tracked_names, type_filter=[nn.Linear])
 
     # --- Hessian/covariance accumulation pass (needed for precondition=True
     # scoring below, AND for add_lora()'s PCA init if --lora_init=pca --
@@ -216,8 +234,8 @@ def run(args):
         for s in range(0, n_train, args.batch):
             xb, yb = Xtr_t[s:s + args.batch], ytr_t[s:s + args.batch]
             with run_(data_id=data_ids(len(xb))):
-                target_model.zero_grad(set_to_none=True)
-                F.cross_entropy(logits(target_model, xb), yb, reduction="sum").backward()
+                logix_model.zero_grad(set_to_none=True)
+                F.cross_entropy(logits(logix_model, xb), yb, reduction="sum").backward()
         run_.finalize()
     except Exception as e:
         print(f"[exp35] WARNING: Hessian/covariance accumulation pass failed ({e!r}); "
@@ -252,7 +270,7 @@ def run(args):
     gradient_validation = None
     if not getattr(args, "skip_gradient_validation", False):
         def per_example_loss_fn(xb, yb):
-            raw = F.cross_entropy(logits(target_model, xb), yb, reduction="none")
+            raw = F.cross_entropy(logits(logix_model, xb), yb, reduction="none")
             return [raw[i] for i in range(raw.shape[0])]
 
         n_chk = min(n_train, args.batch, 4)
@@ -261,7 +279,7 @@ def run(args):
         # train (0+) or test (1e9+) data_ids
         check_ids = [str(2 * 10 ** 9 + i) for i in range(n_chk)]
         gradient_validation = validate_logix_gradients(
-            run_, target_model, tracked_names, Xtr_t[:n_chk], ytr_t[:n_chk],
+            run_, logix_model, tracked_names, Xtr_t[:n_chk], ytr_t[:n_chk],
             per_example_loss_fn, data_id=check_ids,
         )
         print(f"[exp35] gradient validation OK: worst_cosine="
@@ -277,13 +295,22 @@ def run(args):
     for s in range(0, n_train, args.batch):
         xb, yb = Xtr_t[s:s + args.batch], ytr_t[s:s + args.batch]
         with run_(data_id=data_ids(len(xb))):
-            target_model.zero_grad(set_to_none=True)
-            F.cross_entropy(logits(target_model, xb), yb, reduction="sum").backward()
+            logix_model.zero_grad(set_to_none=True)
+            F.cross_entropy(logits(logix_model, xb), yb, reduction="sum").backward()
 
     # finalize() flushes the LogSaver's remaining buffer to the on-disk mmap
     # chunks LogDataset reads -- without this the log dataloader is silently
     # empty (build_log_dataset() just finds zero chunk files).
     run_.finalize()
+
+    from logix_strict import measure_logix_bytes_per_example
+    logix_bytes_per_example = measure_logix_bytes_per_example(run_, n_train)
+    traceprop_proj_dim_to_match = max(1, round(logix_bytes_per_example / 4))
+    print(f"[exp35] LogIX natural settings: measured {logix_bytes_per_example:.1f}B/example "
+          f"on disk for {n_tracked_layers} tracked layers over the real {n_train}-example "
+          f"train logging pass (real serialized size, not an analytical estimate). "
+          f"Matching Traceprop proj_dim = {traceprop_proj_dim_to_match}.")
+
     log_loader = run_.build_log_dataloader(batch_size=args.batch, flatten=False)
 
     # --- TEST set: query points only, kept in-memory via get_log(), not
@@ -294,8 +321,8 @@ def run(args):
     for s in range(0, n_test, args.batch):
         xb, yb = Xte_t[s:s + args.batch], yte_t[s:s + args.batch]
         with run_(data_id=data_ids(len(xb))):
-            target_model.zero_grad(set_to_none=True)
-            F.cross_entropy(logits(target_model, xb), yb, reduction="sum").backward()
+            logix_model.zero_grad(set_to_none=True)
+            F.cross_entropy(logits(logix_model, xb), yb, reduction="sum").backward()
         test_logs.append(run_.get_log(copy=True))
 
     def influence_matrix(precondition, hessian):
@@ -327,6 +354,14 @@ def run(args):
     else:
         logix_precond = logix_dot
         precond_note = "fallback_to_dot: hessian accumulation pass failed"
+
+    # ---- Traceprop's own gradients at the storage-matched proj_dim, for a
+    # genuine apples-to-apples comparison against LogIX's natural footprint
+    # (not the reverse -- LogIX is never shrunk to match us) ----
+    G_train_matched = collect_grads_posthoc(
+        target_model, Xtr_t, ytr_t, scope_patterns, last_n, proj_dim=traceprop_proj_dim_to_match)
+    G_test_matched = collect_grads_posthoc(
+        target_model, Xte_t, yte_t, scope_patterns, last_n, proj_dim=traceprop_proj_dim_to_match)
 
     # ---- ground-truth LDS margins from subset retraining ----
     print(f"[exp35] retraining {args.n_subsets} subsets (frac={args.subset_frac}) ...")
@@ -363,6 +398,8 @@ def run(args):
     for name, mat in (
         ("traceprop_dot", dot_scores(G_train, G_test)),
         ("traceprop_trak", trak_scores(G_train, G_test)),
+        ("traceprop_dot_matched", dot_scores(G_train_matched, G_test_matched)),
+        ("traceprop_trak_matched", trak_scores(G_train_matched, G_test_matched)),
         ("logix_dot", logix_dot),
         ("logix_preconditioned", logix_precond),
     ):
@@ -378,7 +415,6 @@ def run(args):
         "backend": args.backend,
         "model": args.model if args.backend == "hf" else "tiny-clf",
         "device": device,
-        "rank_mode": args.rank_mode,
         "lora_init": args.lora_init,
         "lora_init_effective": effective_init,
         "n_train": n_train, "n_test": n_test, "n_subsets": args.n_subsets,
@@ -386,10 +422,17 @@ def run(args):
         "proj_dim": args.proj_dim, "track_last_n_blocks": args.track,
         "target_test_acc": round(acc, 4),
         "storage_matching": {
-            "ours_bytes_per_example": our_bytes_per_example,
-            "logix_rank_used": logix_rank,
-            "logix_bytes_per_example_analytical": logix_bytes_per_example,
-            "reverse_match_proj_dim": None if args.rank_mode == "matched" else reverse_proj_dim,
+            "logix_bytes_per_example_measured": round(logix_bytes_per_example, 2),
+            "traceprop_proj_dim_default": args.proj_dim,
+            "traceprop_proj_dim_matched": traceprop_proj_dim_to_match,
+            "note": "LogIX runs at its own natural settings (no rank override); "
+                    "logix_bytes_per_example_measured is the REAL on-disk serialized size "
+                    "from the actual train logging pass, not an analytical estimate. "
+                    "traceprop_dot/traceprop_trak use proj_dim (the default reference, "
+                    "512 floats/2KB elsewhere in the paper); "
+                    "traceprop_dot_matched/traceprop_trak_matched use "
+                    "traceprop_proj_dim_matched, grown or shrunk to LogIX's own measured "
+                    "footprint for a genuine storage-matched comparison.",
         },
         "logix_preconditioned_note": precond_note,
         "gradient_validation": gradient_validation,
@@ -401,7 +444,7 @@ def run(args):
     print(json.dumps(out, indent=2))
 
     os.makedirs("results", exist_ok=True)
-    tag = f"{args.backend}_{out['model'].replace('/', '_')}_{args.rank_mode}_{args.lora_init}init"
+    tag = f"{args.backend}_{out['model'].replace('/', '_')}_{args.lora_init}init"
     fn = getattr(args, "out", None) or f"results/exp35_{tag}.json"
     npz_fn = (fn[:-5] if fn.endswith(".json") else fn) + "_raw.npz" if getattr(args, "out", None) \
         else f"results/exp35_{tag}_raw.npz"
@@ -438,8 +481,6 @@ def main():
     ap.add_argument("--proj_dim", type=int, default=512)
     ap.add_argument("--track", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--rank_mode", choices=["matched", "logix_default"], default="matched")
-    ap.add_argument("--logix_default_rank", type=int, default=64)
     ap.add_argument("--lora_init", choices=["random", "pca"], default="pca",
                     help="LogIX's LoRA init strategy for add_lora(). 'pca' is its authors' "
                          "recommended setting for LoRA (needs the covariance pass above, "
