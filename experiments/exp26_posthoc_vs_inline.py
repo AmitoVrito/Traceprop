@@ -218,7 +218,9 @@ def main():
     ap.add_argument("--rank", type=int, default=8)
     ap.add_argument("--proj_dim", type=int, default=512)
     ap.add_argument("--track", type=int, default=1)
-    ap.add_argument("--repeats", type=int, default=5)
+    ap.add_argument("--repeats", type=int, default=20,
+                    help="measurement repeats for error bars (was 5 -- under-powered, "
+                         "matching the fix applied to exp25/exp31)")
     ap.add_argument("--trak_ckpts", type=int, default=5,
                     help="TRAK ensembles over K trained checkpoints → K post-hoc passes")
     ap.add_argument("--d", type=int, default=256, help="tiny model width")
