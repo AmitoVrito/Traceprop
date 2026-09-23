@@ -35,7 +35,10 @@ import numpy as np
 
 from exp25_llm_inline_overhead import build_tiny_model, build_hf_model, hf_batch, tiny_batch
 from exp27_lds_quality import build_tiny_classifier, synthetic_data
-from logix_strict import install_strict_warnings, assert_pca_init_took_effect, patch_loralinear_weight_proxy
+from logix_strict import (
+    install_strict_warnings, assert_pca_init_took_effect,
+    patch_loralinear_weight_proxy, validate_logix_gradients,
+)
 
 
 def run(args):
@@ -164,6 +167,8 @@ def run(args):
               f"rerun exp25/exp26 with --proj_dim {reverse_proj_dim} "
               f"({reverse_proj_dim * 4}B/example) to grow Traceprop up to this same budget.")
 
+    validation_stats = []
+
     def build_run(save_to_disk, init_strategy):
         """Fresh model + fresh LogIX instance, wrapped with add_lora() exactly
         once -- see the note above build_model() on why this can't reuse a
@@ -237,6 +242,32 @@ def run(args):
         # is timed and reported separately, not hidden inside this cost).
         run_.setup({"grad": ["log"]})
         run_.save(save_to_disk)
+
+        if not getattr(args, "skip_gradient_validation", False):
+            def per_example_loss_fn(xb, yb):
+                if args.backend == "tiny":
+                    raw = F.cross_entropy(model(xb), yb, reduction="none")
+                else:
+                    logits = model(xb).logits
+                    raw = F.cross_entropy(
+                        logits[:, :-1].reshape(-1, logits.size(-1)),
+                        xb[:, 1:].reshape(-1), reduction="none",
+                    ).reshape(xb.shape[0], -1).sum(dim=1)
+                return [raw[i] for i in range(raw.shape[0])]
+
+            check_xb, check_yb, check_s = batch(0)
+            n_chk = min(len(check_xb) if args.backend == "tiny" else check_xb.shape[0], 4)
+            check_xb, check_yb = check_xb[:n_chk], (check_yb[:n_chk] if check_yb is not None else None)
+            stats = validate_logix_gradients(
+                run_, model, tracked_names, check_xb, check_yb, per_example_loss_fn,
+                data_id=[str(check_s + i) for i in range(n_chk)],
+            )
+            print(f"[exp31] gradient validation ({init_strategy}, save_to_disk={save_to_disk}) "
+                  f"OK: worst_cosine={stats['worst_cosine']:.6f} over {stats['n_checks']} checks, "
+                  f"scale_ratio mean/min/max={stats['scale_ratio_mean']:.3f}/"
+                  f"{stats['scale_ratio_min']:.3f}/{stats['scale_ratio_max']:.3f}")
+            validation_stats.append({"init_strategy": init_strategy, "save_to_disk": save_to_disk, **stats})
+
         return run_, model, loss_fn, opt, covariance_pass_s
 
     def sync():
@@ -373,6 +404,7 @@ def run(args):
                     "leaves LogIX at its own default and reports the proj_dim needed to grow "
                     "Traceprop up to LogIX's budget instead (the reverse-match point).",
         },
+        "gradient_validation": validation_stats,
         "configs": configs,
         "note": "directly comparable to exp25/exp30's LoRAGradientLogger overhead numbers "
                 "(same model, scope, batch/seq, interleaved-block timing methodology). "
@@ -437,6 +469,10 @@ def main():
     ap.add_argument("--force", action="store_true", help="overwrite --out even if it already exists")
     ap.add_argument("--gpu_check", default="L4", help="required substring in GPU name when device=cuda ('' to disable)")
     ap.add_argument("--skip_gpu_check", action="store_true")
+    ap.add_argument("--skip_gradient_validation", action="store_true",
+                    help="skip the one-time cosine-vs-autograd check of LogIX's logged "
+                         "gradients (runs once per config by default -- cheap, catches "
+                         "wiring bugs like the add_lora()/PEFT .weight incompatibility)")
     args = ap.parse_args()
     run(args)
 

@@ -46,7 +46,10 @@ import numpy as np
 from exp27_lds_quality import (
     synthetic_data, load_sst2, build_tiny_classifier, build_hf_classifier,
 )
-from logix_strict import install_strict_warnings, assert_pca_init_took_effect, patch_loralinear_weight_proxy
+from logix_strict import (
+    install_strict_warnings, assert_pca_init_took_effect,
+    patch_loralinear_weight_proxy, validate_logix_gradients,
+)
 
 
 def run(args):
@@ -239,6 +242,35 @@ def run(args):
     # NOTE: eval() internally calls save(False) -- it must NOT be called here,
     # or it undoes save(True) and the train pass silently logs nothing.
     run_.setup({"grad": ["log"]})
+
+    # Gradient validation MUST run BEFORE save(True) below -- LogIX's default
+    # _save state is False, so a check here stays in-memory only (get_log()
+    # reads self.binfo.log regardless of save state). Running it after
+    # save(True) instead persisted the check batch's entries into the SAME
+    # on-disk log directory build_log_dataloader() reads later, silently
+    # inflating n_train (caught: 40 became 44, off by exactly n_chk).
+    gradient_validation = None
+    if not getattr(args, "skip_gradient_validation", False):
+        def per_example_loss_fn(xb, yb):
+            raw = F.cross_entropy(logits(target_model, xb), yb, reduction="none")
+            return [raw[i] for i in range(raw.shape[0])]
+
+        n_chk = min(n_train, args.batch, 4)
+        # distinct id namespace (2e9+) so this check's log entries -- if this
+        # were ever run with save(True) active -- could never collide with
+        # train (0+) or test (1e9+) data_ids
+        check_ids = [str(2 * 10 ** 9 + i) for i in range(n_chk)]
+        gradient_validation = validate_logix_gradients(
+            run_, target_model, tracked_names, Xtr_t[:n_chk], ytr_t[:n_chk],
+            per_example_loss_fn, data_id=check_ids,
+        )
+        print(f"[exp35] gradient validation OK: worst_cosine="
+              f"{gradient_validation['worst_cosine']:.6f} over "
+              f"{gradient_validation['n_checks']} checks, scale_ratio "
+              f"mean/min/max={gradient_validation['scale_ratio_mean']:.3f}/"
+              f"{gradient_validation['scale_ratio_min']:.3f}/"
+              f"{gradient_validation['scale_ratio_max']:.3f}")
+
     run_.save(True)
 
     id_gen_counter["n"] = 0
@@ -360,6 +392,7 @@ def run(args):
             "reverse_match_proj_dim": None if args.rank_mode == "matched" else reverse_proj_dim,
         },
         "logix_preconditioned_note": precond_note,
+        "gradient_validation": gradient_validation,
         "lds": {k: {"mean": round(v[0], 4), "std": round(v[1], 4)} for k, v in results.items()},
     }
     print("\n=== LDS: Traceprop vs LogIX (own compute_influence_all API) ===")
@@ -417,6 +450,9 @@ def main():
     ap.add_argument("--force", action="store_true", help="overwrite --out even if it already exists")
     ap.add_argument("--gpu_check", default="L4", help="required substring in GPU name when device=cuda ('' to disable)")
     ap.add_argument("--skip_gpu_check", action="store_true")
+    ap.add_argument("--skip_gradient_validation", action="store_true",
+                    help="skip the one-time cosine-vs-autograd check of LogIX's logged "
+                         "gradients (cheap, catches wiring bugs -- see logix_strict.py)")
     args = ap.parse_args()
     run(args)
 
