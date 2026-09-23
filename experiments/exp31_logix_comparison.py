@@ -98,6 +98,27 @@ def run(args):
 
     print(f"[exp31] backend={args.backend} tracking {len(tracked_names)} modules")
 
+    # --- Storage matching -------------------------------------------------
+    # Ours: a single dense sparse-JL projection to proj_dim floats, total
+    # args.proj_dim * 4 bytes/example regardless of tracked-layer count.
+    # LogIX: a rank x rank core matrix PER tracked layer (LoraLinear inserts
+    # A: in->rank, B: rank->rank, C: rank->out; the per-example-varying part
+    # is the B core), so its per-example storage is
+    # n_layers * rank^2 * 4 bytes and grows with both rank AND layer count.
+    # Its own default (rank=64) with our 6-layer GPT-2 scope would store
+    # ~96KB/example -- ~48x our 2KB budget -- which would make "LogIX is
+    # slower" partly a "LogIX is doing more work by default" result, not a
+    # mechanism result. Solve for the rank that puts LogIX at the same
+    # per-example budget we report elsewhere in the paper (2KB) instead.
+    our_bytes_per_example = args.proj_dim * 4
+    n_tracked_layers = len(tracked_names)
+    matched_rank = max(1, int((our_bytes_per_example / (4 * n_tracked_layers)) ** 0.5))
+    logix_bytes_per_example = n_tracked_layers * (matched_rank ** 2) * 4
+    print(f"[exp31] storage matching: ours={our_bytes_per_example}B/example "
+          f"({args.proj_dim} floats), LogIX rank set to {matched_rank} for "
+          f"{n_tracked_layers} tracked layers -> {logix_bytes_per_example}B/example "
+          f"(analytical -- not yet verified against LogIX's actual serialized log size)")
+
     trainable = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.SGD(trainable, lr=1e-3)
 
@@ -105,7 +126,14 @@ def run(args):
         # logix.init() is a process-level singleton; use LogIX(...) directly so we
         # can build a second instance for the second (matched-buffering) config.
         run_ = logix.LogIX(project=f"exp31_{os.getpid()}_{save_to_disk}", config="exp31_config.yaml")
+        run_.config.lora.rank = matched_rank  # storage-matched, see above
         run_.watch(model, name_filter=tracked_names, type_filter=[nn.Linear])
+        # {"grad": ["log"]} only -- deliberately NOT requesting "covariance" or
+        # "hessian" statistics. LogIX's Hessian/EK-FAC machinery is opt-in via
+        # those keys; omitting them means no covariance accumulation happens
+        # during this timed comparison, so it isn't silently doing extra work
+        # Traceprop doesn't do. (Not yet independently verified by inspecting
+        # LogIX's internal state after a run -- flagging the assumption.)
         run_.setup({"grad": ["log"]})
         run_.save(save_to_disk)
         return run_
@@ -198,12 +226,19 @@ def run(args):
         "tracked_modules_count": len(tracked_names),
         "track_last_n_blocks": args.track,
         "steps": args.steps, "repeats": args.repeats, "warmup": args.warmup,
+        "storage_matching": {
+            "ours_bytes_per_example": our_bytes_per_example,
+            "ours_proj_dim": args.proj_dim,
+            "logix_rank_used": matched_rank,
+            "logix_bytes_per_example_analytical": logix_bytes_per_example,
+            "note": "analytical (rank^2 * 4 bytes * n_layers), not yet verified against "
+                    "LogIX's actual serialized log file size -- check this on the next run.",
+        },
+        "hessian_covariance_requested": False,
         "configs": configs,
         "note": "directly comparable to exp25/exp30's LoRAGradientLogger overhead numbers "
                 "(same model, scope, batch/seq, interleaved-block timing methodology). "
-                "bytes-per-example and LDS-on-LogIX are not yet measured here -- see "
-                "docs/mlsys note on exp31 known gaps before treating this as the final "
-                "fairness-locked comparison.",
+                "LDS-on-LogIX is not yet measured here.",
     }
     print(json.dumps(out, indent=2))
     os.makedirs("results", exist_ok=True)
@@ -225,6 +260,10 @@ def main():
     ap.add_argument("--rank", type=int, default=8)
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--track", type=int, default=1)
+    ap.add_argument("--proj_dim", type=int, default=512,
+                    help="reference for storage matching -- our proj_dim elsewhere "
+                         "(exp25/exp30 default 512 = 2KB/example); LogIX's rank is "
+                         "solved to match this, not independently configurable here")
     ap.add_argument("--steps", type=int, default=20)
     ap.add_argument("--warmup", type=int, default=10)
     ap.add_argument("--repeats", type=int, default=20)

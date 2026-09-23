@@ -8,33 +8,41 @@
   "steps": 5,
   "repeats": 3,
   "warmup": 3,
+  "storage_matching": {
+    "ours_bytes_per_example": 2048,
+    "ours_proj_dim": 512,
+    "logix_rank_used": 6,
+    "logix_bytes_per_example_analytical": 1872,
+    "note": "analytical (rank^2 * 4 bytes * n_layers), not yet verified against LogIX's actual serialized log file size -- check this on the next run."
+  },
+  "hessian_covariance_requested": false,
   "configs": {
     "logix_default_disk": {
       "save_to_disk": true,
-      "base_step_ms": 15.8313,
-      "overhead_pct_median": 27.108,
-      "overhead_pct_std": 9.891,
+      "base_step_ms": 81.198,
+      "overhead_pct_median": -2.445,
+      "overhead_pct_std": 18.597,
       "overhead_samples": [
-        41.832,
-        27.108,
-        17.806
+        -2.445,
+        -29.774,
+        15.452
       ],
       "peak_mem_mb_baseline": null,
       "peak_mem_mb_logix": null
     },
     "matched_buffering": {
       "save_to_disk": false,
-      "base_step_ms": 18.185,
-      "overhead_pct_median": 10.526,
-      "overhead_pct_std": 5.983,
+      "base_step_ms": 76.0201,
+      "overhead_pct_median": -8.515,
+      "overhead_pct_std": 4.814,
       "overhead_samples": [
-        10.526,
-        6.405,
-        20.645
+        -16.31,
+        -8.515,
+        -4.751
       ],
       "peak_mem_mb_baseline": null,
       "peak_mem_mb_logix": null
     }
   },
-  "note": "directly comparable to exp25/exp30's LoRAGradientLogger overhead numbers (same model, scope, batch/seq, interleaved-block timing methodology). bytes-per-example and LDS-on-LogIX are not yet measured here -- see docs/mlsys note on exp31 known gaps before treating this as the final fairness-locked comparison."
+  "note": "directly comparable to exp25/exp30's LoRAGradientLogger overhead numbers (same model, scope, batch/seq, interleaved-block timing methodology). LDS-on-LogIX is not yet measured here."
 }
