@@ -1,0 +1,19 @@
+{
+  "rank": 1,
+  "world_size": 2,
+  "model": "gpt2",
+  "backend": "hf",
+  "batch": 16,
+  "seq": 64,
+  "steps": 200,
+  "repeats": 20,
+  "base_step_ms": 241.8443,
+  "overhead_pct_median": 0.372,
+  "overhead_pct_std": 2.994,
+  "logged_index_range": [
+    32000,
+    35359
+  ],
+  "logged_count": 3360,
+  "note": "per-rank result; compare overhead_pct_median across ranks and against the single-GPU number for the same model/config (e.g. Table 1) -- if DDP adds no logging-side communication, they should match."
+}

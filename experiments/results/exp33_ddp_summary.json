@@ -1,0 +1,9 @@
+{
+  "world_size": 2,
+  "per_rank_overhead_pct_median": [
+    0.372,
+    0.372
+  ],
+  "overhead_spread_pct": 0.0,
+  "logged_index_ranges_disjoint_across_ranks": true
+}

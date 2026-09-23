@@ -47,7 +47,11 @@ def run(args):
     from traceprop.attribution.gradient_store import GradientStore
     from traceprop.llm import LoRAGradientLogger, select_lora_linears
 
-    dist.init_process_group(backend="nccl")
+    import datetime
+    # Explicit timeout so a rank mismatch (e.g. one rank crashing silently
+    # while another waits on a collective) raises after a bounded wait
+    # instead of hanging indefinitely -- default NCCL timeout is much longer.
+    dist.init_process_group(backend="nccl", timeout=datetime.timedelta(minutes=10))
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -98,6 +102,7 @@ def run(args):
         torch.cuda.synchronize()
         dist.barrier()  # keep ranks' timing windows aligned, not part of the logger's own cost
 
+    log(f"starting warmup ({args.warmup} steps)")
     for step in range(args.warmup):
         opt.zero_grad(set_to_none=True)
         loss_fn().backward()
@@ -105,6 +110,7 @@ def run(args):
                                                  rank_offset + (step + 1) * args.batch))
         opt.step()
     sync()
+    log("warmup done, starting measurement")
 
     def block(use_logger):
         sync()
@@ -120,11 +126,14 @@ def run(args):
         return time.perf_counter() - t0
 
     overheads, base_times = [], []
-    for _ in range(args.repeats):
+    for rep in range(args.repeats):
         b = block(False)
         i = block(True)
         overheads.append((i - b) / b * 100.0)
         base_times.append(b)
+        if rank == 0:
+            log(f"repeat {rep + 1}/{args.repeats}: base={b:.2f}s inline={i:.2f}s "
+                f"overhead={overheads[-1]:.2f}%")
 
     med = statistics.median(overheads)
     std = statistics.pstdev(overheads) if len(overheads) > 1 else 0.0
