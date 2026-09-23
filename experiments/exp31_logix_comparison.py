@@ -35,6 +35,7 @@ import numpy as np
 
 from exp25_llm_inline_overhead import build_tiny_model, build_hf_model, hf_batch, tiny_batch
 from exp27_lds_quality import build_tiny_classifier, synthetic_data
+from logix_strict import install_strict_warnings, assert_pca_init_took_effect, patch_loralinear_weight_proxy
 
 
 def run(args):
@@ -42,6 +43,9 @@ def run(args):
     import torch.nn as nn
     import torch.nn.functional as F
     import logix
+
+    install_strict_warnings()
+    patch_loralinear_weight_proxy()
 
     device = args.device
     if device == "cuda" and not getattr(args, "skip_gpu_check", False):
@@ -160,10 +164,16 @@ def run(args):
               f"rerun exp25/exp26 with --proj_dim {reverse_proj_dim} "
               f"({reverse_proj_dim * 4}B/example) to grow Traceprop up to this same budget.")
 
-    def build_run(save_to_disk):
+    def build_run(save_to_disk, init_strategy):
         """Fresh model + fresh LogIX instance, wrapped with add_lora() exactly
         once -- see the note above build_model() on why this can't reuse a
-        shared model across configs."""
+        shared model across configs. Returns (run_, model, loss_fn, opt,
+        covariance_pass_s) -- the last is 0.0 for init_strategy='random',
+        and the real wall-clock of the covariance-accumulation pass for
+        'pca' (must be counted as part of LogIX's cost for that config, not
+        hidden -- it's a genuine extra pass over the data LogIX's authors
+        recommend for LoRA, the same "second pass" shape this paper argues
+        against elsewhere, so it has to be reported, not omitted)."""
         model = build_model()
         loss_fn = make_loss_fn(model)
         trainable = [p for p in model.parameters() if p.requires_grad]
@@ -171,11 +181,38 @@ def run(args):
 
         # logix.init() is a process-level singleton; use LogIX(...) directly so we
         # can build a second instance for the second (matched-buffering) config.
-        run_ = logix.LogIX(project=f"exp31_{os.getpid()}_{save_to_disk}", config="exp31_config.yaml")
+        run_ = logix.LogIX(project=f"exp31_{os.getpid()}_{save_to_disk}_{init_strategy}",
+                            config="exp31_config.yaml")
+        run_.config.lora.init = init_strategy
         if matched_rank is not None:
             run_.config.lora.rank = matched_rank  # storage-matched, see above
         # else: leave LogIX's own default rank (LoRAConfig.rank=64) untouched
         run_.watch(model, name_filter=tracked_names, type_filter=[nn.Linear])
+
+        covariance_pass_s = 0.0
+        if init_strategy == "pca":
+            # PCA init needs per-module forward/backward covariance BEFORE
+            # add_lora() runs (LoRAHandler.add_lora() reads
+            # self._state.get_covariance_state(), keyed by the ORIGINAL
+            # pre-wrap module names) -- confirmed by reading logix/lora/lora.py.
+            # Without this pass, add_lora() finds an empty covariance state
+            # and silently falls back to random init (see logix_strict.py);
+            # assert_pca_init_took_effect() below catches that if it happens.
+            run_.setup({"forward": ["covariance"], "backward": ["covariance"]})
+            if device == "cuda":
+                torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            for step in range(args.pca_cov_steps):
+                xb, yb, s = batch(step)
+                opt.zero_grad(set_to_none=True)
+                with run_(data_id=[str(s + i) for i in range(args.batch)]):
+                    loss_fn(xb, yb).backward()
+                opt.step()
+            run_.finalize()
+            if device == "cuda":
+                torch.cuda.synchronize()
+            covariance_pass_s = time.perf_counter() - t0
+
         # CRITICAL: watch() alone does NOT apply LogIX's low-rank compression --
         # it just hooks whatever module it's given at that module's own shape.
         # is_lora(model) (which gates the compressed logging path) checks for
@@ -191,15 +228,16 @@ def run(args):
         # Calling add_lora() a SECOND time on an already-wrapped model wraps
         # the wrapper (confirmed empirically) -- hence a brand-new model here.
         run_.add_lora()
+        assert_pca_init_took_effect(run_, init_strategy)
         # {"grad": ["log"]} only -- deliberately NOT requesting "covariance" or
-        # "hessian" statistics. LogIX's Hessian/EK-FAC machinery is opt-in via
-        # those keys; omitting them means no covariance accumulation happens
-        # during this timed comparison, so it isn't silently doing extra work
-        # Traceprop doesn't do. (Not yet independently verified by inspecting
-        # LogIX's internal state after a run -- flagging the assumption.)
+        # "hessian" statistics during the TIMED logging pass below. LogIX's
+        # Hessian/EK-FAC machinery is opt-in via those keys; omitting them
+        # here means no additional covariance accumulation happens during the
+        # timed comparison itself (the covariance pass above, when it runs,
+        # is timed and reported separately, not hidden inside this cost).
         run_.setup({"grad": ["log"]})
         run_.save(save_to_disk)
-        return run_, model, loss_fn, opt
+        return run_, model, loss_fn, opt, covariance_pass_s
 
     def sync():
         if device == "cuda":
@@ -245,19 +283,20 @@ def run(args):
         sync()
         return time.perf_counter() - t0
 
-    def measure(save_to_disk):
+    def measure(save_to_disk, init_strategy):
         """One full interleaved measurement (baseline vs LogIX), matched
-        warmup/reps/sync policy, at a given LogIX disk-flush setting. Baseline
-        runs on a freshly-built, never-add_lora()'d model; the LogIX side runs
-        on its own freshly-built, add_lora()-wrapped model -- two separate
-        models, not one shared one (see build_run()'s docstring)."""
+        warmup/reps/sync policy, at a given LogIX disk-flush setting and init
+        strategy. Baseline runs on a freshly-built, never-add_lora()'d model;
+        the LogIX side runs on its own freshly-built, add_lora()-wrapped
+        model -- two separate models, not one shared one (see build_run()'s
+        docstring)."""
         base_model = build_model()
         base_loss_fn = make_loss_fn(base_model)
         base_opt = torch.optim.SGD(
             [p for p in base_model.parameters() if p.requires_grad], lr=1e-3)
         base_step = make_step_fn(base_loss_fn, base_opt, lrun=None)
 
-        lrun, model, loss_fn, opt = build_run(save_to_disk)
+        lrun, model, loss_fn, opt, covariance_pass_s = build_run(save_to_disk, init_strategy)
         logix_step = make_step_fn(loss_fn, opt, lrun=lrun)
 
         warmup(base_step)
@@ -278,24 +317,38 @@ def run(args):
         med = statistics.median(overheads)
         std = statistics.pstdev(overheads) if len(overheads) > 1 else 0.0
         base_step_ms = statistics.median(base_times) / args.steps * 1e3
+        base_total_s = sum(base_times)
         return {
             "save_to_disk": save_to_disk,
+            "init_strategy": init_strategy,
             "base_step_ms": round(base_step_ms, 4),
             "overhead_pct_median": round(med, 3),
             "overhead_pct_std": round(std, 3),
             "overhead_samples": [round(x, 3) for x in overheads],
+            "covariance_pass_s": round(covariance_pass_s, 4),
+            # covariance pass is a ONE-TIME cost (PCA init only), not per-repeat --
+            # reported both as raw seconds and as a % of this config's total
+            # measured baseline time, so it isn't silently invisible next to the
+            # per-step overhead numbers above.
+            "covariance_pass_pct_of_measured_baseline": (
+                round(covariance_pass_s / base_total_s * 100, 2) if base_total_s > 0 else 0.0
+            ),
             "peak_mem_mb_baseline": round(statistics.median([m for m in base_peak_mb if m]), 2) if device == "cuda" else None,
             "peak_mem_mb_logix": round(statistics.median([m for m in logix_peak_mb if m]), 2) if device == "cuda" else None,
         }
 
-    # Two configurations, per the fairness protocol: LogIX's own default
-    # (writes to disk as it goes) and a matched-buffering config (kept in
-    # memory, comparable to LoRAGradientLogger's buffer=True/drain()).
+    # Configurations, per the fairness protocol: LogIX's own literal default
+    # (random init, writes to disk as it goes) and its authors' recommended
+    # setting for LoRA (PCA init, which needs the extra covariance pass timed
+    # above -- a genuine second pass over the data, reported honestly rather
+    # than hidden). Both at matched-buffering disk policy (in-memory, no
+    # per-step host round-trip) so the disk-vs-init axes aren't conflated.
     configs = {}
-    print("[exp31] measuring LogIX default (save_to_disk=True) ...")
-    configs["logix_default_disk"] = measure(save_to_disk=True)
-    print("[exp31] measuring LogIX matched-buffering (save_to_disk=False) ...")
-    configs["matched_buffering"] = measure(save_to_disk=False)
+    print("[exp31] measuring LogIX default (random init, matched-buffering) ...")
+    configs["default_random_init"] = measure(save_to_disk=False, init_strategy="random")
+    print("[exp31] measuring LogIX recommended (pca init, matched-buffering, "
+          "covariance pass timed) ...")
+    configs["recommended_pca_init"] = measure(save_to_disk=False, init_strategy="pca")
 
     out = {
         "tool": "logix (logix-project/logix)",
@@ -320,11 +373,14 @@ def run(args):
                     "leaves LogIX at its own default and reports the proj_dim needed to grow "
                     "Traceprop up to LogIX's budget instead (the reverse-match point).",
         },
-        "hessian_covariance_requested": False,
         "configs": configs,
         "note": "directly comparable to exp25/exp30's LoRAGradientLogger overhead numbers "
                 "(same model, scope, batch/seq, interleaved-block timing methodology). "
-                "LDS-on-LogIX is not yet measured here.",
+                "default_random_init requests no covariance (LogIX's literal default); "
+                "recommended_pca_init requests forward/backward covariance for PCA init "
+                "(its authors' recommended LoRA setting) and times that pass separately "
+                "in covariance_pass_s -- see logix_preconditioned in exp35 for the "
+                "corresponding LDS-side comparison.",
     }
     print(json.dumps(out, indent=2))
     os.makedirs("results", exist_ok=True)
@@ -372,6 +428,11 @@ def main():
     ap.add_argument("--steps", type=int, default=20)
     ap.add_argument("--warmup", type=int, default=10)
     ap.add_argument("--repeats", type=int, default=20)
+    ap.add_argument("--pca_cov_steps", type=int, default=20,
+                    help="steps used to accumulate forward/backward covariance for LogIX's "
+                         "recommended PCA init (recommended_pca_init config only); this pass "
+                         "is timed and reported separately (covariance_pass_s), not hidden "
+                         "inside the per-step overhead numbers")
     ap.add_argument("--out", default=None, help="output path override (default: auto from backend/model)")
     ap.add_argument("--force", action="store_true", help="overwrite --out even if it already exists")
     ap.add_argument("--gpu_check", default="L4", help="required substring in GPU name when device=cuda ('' to disable)")

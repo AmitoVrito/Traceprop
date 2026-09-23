@@ -1,2 +1,6 @@
+# init here is always overridden explicitly by exp31/exp35's own code
+# (run_.config.lora.init = ...) before add_lora() is called -- this file's
+# value is never actually used, kept only because LogIX requires the file
+# to exist and have valid structure.
 lora:
-  init: pca
+  init: random

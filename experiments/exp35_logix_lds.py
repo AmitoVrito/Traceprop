@@ -46,6 +46,7 @@ import numpy as np
 from exp27_lds_quality import (
     synthetic_data, load_sst2, build_tiny_classifier, build_hf_classifier,
 )
+from logix_strict import install_strict_warnings, assert_pca_init_took_effect, patch_loralinear_weight_proxy
 
 
 def run(args):
@@ -54,6 +55,9 @@ def run(args):
     import torch.nn.functional as F
     from scipy.stats import spearmanr
     import logix
+
+    install_strict_warnings()
+    patch_loralinear_weight_proxy()
 
     from traceprop.attribution.gradient_store import GradientStore
     from traceprop.llm import LoRAGradientLogger, select_lora_linears
@@ -192,13 +196,17 @@ def run(args):
     run_ = logix.LogIX(project=f"exp35_{os.getpid()}", config="exp31_config.yaml")
     if args.rank_mode == "matched":
         run_.config.lora.rank = logix_rank
+    run_.config.lora.init = args.lora_init
     run_.watch(target_model, name_filter=tracked_names, type_filter=[nn.Linear])
 
-    # --- Hessian/covariance accumulation pass (needed for precondition=True) ---
-    # Covariance is accumulated from forward activations / backward error
-    # signals (KFAC-style), NOT from "grad" -- that's why this needs its own
-    # setup() call, separate from the "grad": ["log"] mode used for the
-    # actual per-example logging pass below.
+    # --- Hessian/covariance accumulation pass (needed for precondition=True
+    # scoring below, AND for add_lora()'s PCA init if --lora_init=pca --
+    # LoRAHandler.add_lora() reads this SAME per-module covariance state, so
+    # one pass over the training set serves both purposes). Covariance is
+    # accumulated from forward activations / backward error signals
+    # (KFAC-style), NOT from "grad" -- that's why this needs its own setup()
+    # call, separate from the "grad": ["log"] mode used for the actual
+    # per-example logging pass below.
     hessian_ok = True
     try:
         run_.setup({"forward": ["covariance"], "backward": ["covariance"]})
@@ -209,9 +217,20 @@ def run(args):
                 F.cross_entropy(logits(target_model, xb), yb, reduction="sum").backward()
         run_.finalize()
     except Exception as e:
-        print(f"[exp35] WARNING: Hessian accumulation pass failed ({e!r}); "
-              f"preconditioned scores will fall back to unconditioned dot.")
+        print(f"[exp35] WARNING: Hessian/covariance accumulation pass failed ({e!r}); "
+              f"preconditioned scores will fall back to unconditioned dot, and PCA "
+              f"init (if requested) will fall back to random.")
         hessian_ok = False
+
+    # CRITICAL (same bug as exp31, fixed here for the same reason): watch()
+    # alone does NOT apply LogIX's compression -- is_lora(model) (which gates
+    # the compressed logging path) only becomes true after add_lora() inserts
+    # its own "logix_lora_*" wrapper. Without this call, LogIX logs raw,
+    # uncompressed gradients of our own PEFT adapters, and the rank/storage
+    # numbers above describe a knob that was never actually engaged.
+    run_.add_lora()
+    effective_init = args.lora_init if hessian_ok else "random"
+    assert_pca_init_took_effect(run_, effective_init)
 
     # --- Logging pass over the TRAIN set: persist raw per-example grad to disk ---
     # save(True) is required -- build_log_dataloader() reads the log dataset
@@ -328,6 +347,8 @@ def run(args):
         "model": args.model if args.backend == "hf" else "tiny-clf",
         "device": device,
         "rank_mode": args.rank_mode,
+        "lora_init": args.lora_init,
+        "lora_init_effective": effective_init,
         "n_train": n_train, "n_test": n_test, "n_subsets": args.n_subsets,
         "subset_frac": args.subset_frac, "epochs": args.epochs,
         "proj_dim": args.proj_dim, "track_last_n_blocks": args.track,
@@ -347,7 +368,7 @@ def run(args):
     print(json.dumps(out, indent=2))
 
     os.makedirs("results", exist_ok=True)
-    tag = f"{args.backend}_{out['model'].replace('/', '_')}_{args.rank_mode}"
+    tag = f"{args.backend}_{out['model'].replace('/', '_')}_{args.rank_mode}_{args.lora_init}init"
     fn = getattr(args, "out", None) or f"results/exp35_{tag}.json"
     npz_fn = (fn[:-5] if fn.endswith(".json") else fn) + "_raw.npz" if getattr(args, "out", None) \
         else f"results/exp35_{tag}_raw.npz"
@@ -386,6 +407,12 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--rank_mode", choices=["matched", "logix_default"], default="matched")
     ap.add_argument("--logix_default_rank", type=int, default=64)
+    ap.add_argument("--lora_init", choices=["random", "pca"], default="pca",
+                    help="LogIX's LoRA init strategy for add_lora(). 'pca' is its authors' "
+                         "recommended setting for LoRA (needs the covariance pass above, "
+                         "timed via hessian_ok/covariance already in this script); 'random' "
+                         "is LogIX's literal default (no extra pass needed). Run both to "
+                         "report LDS for each, matching exp31's two overhead configs.")
     ap.add_argument("--out", default=None, help="output path override (default: auto)")
     ap.add_argument("--force", action="store_true", help="overwrite --out even if it already exists")
     ap.add_argument("--gpu_check", default="L4", help="required substring in GPU name when device=cuda ('' to disable)")
