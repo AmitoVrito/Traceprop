@@ -53,35 +53,50 @@ def run(args):
                 f"(pass --gpu_check '' to disable, or --gpu_check <substring> to expect something else)."
             )
 
+    # add_lora() mutates the model IN PLACE, wrapping each tracked module in a
+    # LoraLinear(encoder/bottleneck/decoder/_linear) wrapper -- calling it a
+    # second time on an already-wrapped model wraps the wrapper (confirmed
+    # empirically: tracked module count and shapes go completely wrong,
+    # "logix_lora_B.logix_lora_B: Linear(8,8)" etc). Since this script builds
+    # two LogIX configs (logix_default_disk, matched_buffering), each needs
+    # its OWN freshly-built, never-wrapped model -- hence build_model() as a
+    # factory instead of a single shared `model` variable.
     if args.backend == "tiny":
-        torch.manual_seed(1234)
-        np.random.seed(1234)
-        model = build_tiny_classifier(args.vocab, seq=args.seq, r=args.rank).to(device)
+        def build_model():
+            torch.manual_seed(1234)
+            np.random.seed(1234)
+            return build_tiny_classifier(args.vocab, seq=args.seq, r=args.rank).to(device)
+
         Xtr, ytr = synthetic_data(args.n_train, args.seq, args.vocab, seed=0)
         Xtr_t = torch.tensor(Xtr, device=device)
         ytr_t = torch.tensor(ytr, device=device)
 
-        n_blocks = len(model.blocks)
+        _template = build_model()
+        n_blocks = len(_template.blocks)
         last_block_idx = n_blocks - 1
         tracked_names = [
-            n for n, m in model.named_modules()
+            n for n, m in _template.named_modules()
             if isinstance(m, nn.Linear)
             and (n == "score" or (f"blocks.{last_block_idx}." in n and ("lora_A" in n or "lora_B" in n)))
         ]
+        del _template
 
-        def loss_fn(xb, yb):
-            return F.cross_entropy(model(xb), yb, reduction="sum")
+        def make_loss_fn(model):
+            return lambda xb, yb: F.cross_entropy(model(xb), yb, reduction="sum")
 
         def batch(step):
             s = (step * args.batch) % (args.n_train - args.batch)
             return Xtr_t[s:s + args.batch], ytr_t[s:s + args.batch], s
 
     else:  # hf: exact same model/scope as exp25
-        model = build_hf_model(args.model, r=args.rank).to(device)
+        def build_model():
+            return build_hf_model(args.model, r=args.rank).to(device)
+
         x = hf_batch(args.model, args.seq, args.batch, device)
         last_n = None if args.track <= 0 else args.track
+        _template = build_model()
         tracked_names = [
-            n for n, m in model.named_modules()
+            n for n, m in _template.named_modules()
             if isinstance(m, nn.Linear) and ("lora_A" in n or "lora_B" in n)
         ]
         if args.track > 0:
@@ -93,13 +108,16 @@ def run(args):
             idxs = sorted({block_idx(n) for n in tracked_names if block_idx(n) is not None})
             keep = set(idxs[-args.track:])
             tracked_names = [n for n in tracked_names if block_idx(n) in keep]
+        del _template
 
-        def loss_fn(xb, yb=None):
-            logits = model(xb).logits
-            return F.cross_entropy(
-                logits[:, :-1].reshape(-1, logits.size(-1)),
-                xb[:, 1:].reshape(-1),
-            )
+        def make_loss_fn(model):
+            def loss_fn(xb, yb=None):
+                logits = model(xb).logits
+                return F.cross_entropy(
+                    logits[:, :-1].reshape(-1, logits.size(-1)),
+                    xb[:, 1:].reshape(-1),
+                )
+            return loss_fn
 
         def batch(step):
             return x, None, step * args.batch
@@ -142,17 +160,37 @@ def run(args):
               f"rerun exp25/exp26 with --proj_dim {reverse_proj_dim} "
               f"({reverse_proj_dim * 4}B/example) to grow Traceprop up to this same budget.")
 
-    trainable = [p for p in model.parameters() if p.requires_grad]
-    opt = torch.optim.SGD(trainable, lr=1e-3)
-
     def build_run(save_to_disk):
+        """Fresh model + fresh LogIX instance, wrapped with add_lora() exactly
+        once -- see the note above build_model() on why this can't reuse a
+        shared model across configs."""
+        model = build_model()
+        loss_fn = make_loss_fn(model)
+        trainable = [p for p in model.parameters() if p.requires_grad]
+        opt = torch.optim.SGD(trainable, lr=1e-3)
+
         # logix.init() is a process-level singleton; use LogIX(...) directly so we
         # can build a second instance for the second (matched-buffering) config.
         run_ = logix.LogIX(project=f"exp31_{os.getpid()}_{save_to_disk}", config="exp31_config.yaml")
         if matched_rank is not None:
             run_.config.lora.rank = matched_rank  # storage-matched, see above
-        # else: leave LogIX's own default rank untouched (rank_mode=logix_default)
+        # else: leave LogIX's own default rank (LoRAConfig.rank=64) untouched
         run_.watch(model, name_filter=tracked_names, type_filter=[nn.Linear])
+        # CRITICAL: watch() alone does NOT apply LogIX's low-rank compression --
+        # it just hooks whatever module it's given at that module's own shape.
+        # is_lora(model) (which gates the compressed logging path) checks for
+        # LogIX's own "logix_lora_B" naming, which only exists after add_lora()
+        # inserts its encoder/bottleneck/decoder wrapper. Earlier runs of this
+        # script set run_.config.lora.rank but never called add_lora() -- so
+        # the rank setting had NO EFFECT and LogIX was logging raw, uncompressed
+        # gradients of our own (already rank-8) PEFT adapters the whole time.
+        # Confirmed by inspecting is_lora()/add_lora() source and empirically
+        # verifying the tracked module list before/after this call: without
+        # add_lora(), tracked modules are our own "lora_A"/"lora_B" at their
+        # native shape; with it, they become "logix_lora_B: Linear(rank, rank)".
+        # Calling add_lora() a SECOND time on an already-wrapped model wraps
+        # the wrapper (confirmed empirically) -- hence a brand-new model here.
+        run_.add_lora()
         # {"grad": ["log"]} only -- deliberately NOT requesting "covariance" or
         # "hessian" statistics. LogIX's Hessian/EK-FAC machinery is opt-in via
         # those keys; omitting them means no covariance accumulation happens
@@ -161,7 +199,7 @@ def run(args):
         # LogIX's internal state after a run -- flagging the assumption.)
         run_.setup({"grad": ["log"]})
         run_.save(save_to_disk)
-        return run_
+        return run_, model, loss_fn, opt
 
     def sync():
         if device == "cuda":
@@ -176,47 +214,63 @@ def run(args):
             return None
         return torch.cuda.max_memory_allocated() / 1024 ** 2
 
-    def warmup(lrun, use_logix):
-        for step in range(args.warmup):
-            xb, yb, s = batch(step)
+    def make_step_fn(loss_fn, opt, lrun=None):
+        """lrun=None -> plain training step, no LogIX involvement at all (used
+        for the true baseline, on a model add_lora() never touched -- see the
+        note in build_run() on why the baseline can't reuse the wrapped
+        model: LoraLinear.forward() unconditionally runs its
+        encoder/bottleneck/decoder matmuls even outside the logging context,
+        since the wrapping is architectural, not hook-conditional)."""
+        def step(step_idx):
+            xb, yb, s = batch(step_idx)
             opt.zero_grad(set_to_none=True)
-            if use_logix and lrun is not None:
+            if lrun is not None:
                 with lrun(data_id=[str(s + i) for i in range(args.batch)]):
                     loss_fn(xb, yb).backward()
             else:
                 loss_fn(xb, yb).backward()
             opt.step()
+        return step
+
+    def warmup(step_fn):
+        for step in range(args.warmup):
+            step_fn(step)
         sync()
 
-    def block(lrun, use_logix):
+    def block(step_fn):
         sync()
         t0 = time.perf_counter()
         for step in range(args.steps):
-            xb, yb, s = batch(step)
-            opt.zero_grad(set_to_none=True)
-            if use_logix and lrun is not None:
-                with lrun(data_id=[str(s + i) for i in range(args.batch)]):
-                    loss_fn(xb, yb).backward()
-            else:
-                loss_fn(xb, yb).backward()
-            opt.step()
+            step_fn(step)
         sync()
         return time.perf_counter() - t0
 
     def measure(save_to_disk):
         """One full interleaved measurement (baseline vs LogIX), matched
-        warmup/reps/sync policy, at a given LogIX disk-flush setting."""
-        lrun = build_run(save_to_disk)
-        warmup(lrun, use_logix=True)
+        warmup/reps/sync policy, at a given LogIX disk-flush setting. Baseline
+        runs on a freshly-built, never-add_lora()'d model; the LogIX side runs
+        on its own freshly-built, add_lora()-wrapped model -- two separate
+        models, not one shared one (see build_run()'s docstring)."""
+        base_model = build_model()
+        base_loss_fn = make_loss_fn(base_model)
+        base_opt = torch.optim.SGD(
+            [p for p in base_model.parameters() if p.requires_grad], lr=1e-3)
+        base_step = make_step_fn(base_loss_fn, base_opt, lrun=None)
+
+        lrun, model, loss_fn, opt = build_run(save_to_disk)
+        logix_step = make_step_fn(loss_fn, opt, lrun=lrun)
+
+        warmup(base_step)
+        warmup(logix_step)
 
         overheads, base_times = [], []
         base_peak_mb, logix_peak_mb = [], []
         for _ in range(args.repeats):
             reset_peak_mem()
-            b = block(lrun, use_logix=False)
+            b = block(base_step)
             base_peak_mb.append(peak_mem_mb())
             reset_peak_mem()
-            i = block(lrun, use_logix=True)
+            i = block(logix_step)
             logix_peak_mb.append(peak_mem_mb())
             overheads.append((i - b) / b * 100.0)
             base_times.append(b)
