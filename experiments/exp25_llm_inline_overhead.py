@@ -155,7 +155,7 @@ def run(args):
         )
         x = tiny_batch(vocab, seq, args.batch, device)
     else:
-        model = build_hf_model(args.model, r=args.rank, dtype=args.dtype)
+        model = build_hf_model(args.model, r=args.rank, dtype=getattr(args, "dtype", "fp32"))
         x = hf_batch(args.model, args.seq, args.batch, device)
     model = model.to(device)
 
@@ -274,7 +274,7 @@ def run(args):
     result = {
         "backend": args.backend,
         "model": args.model if args.backend == "hf" else "tiny-gpt",
-        "dtype": args.dtype,
+        "dtype": getattr(args, "dtype", "fp32"),
         "device": device,
         "steps": args.steps,
         "repeats": args.repeats,
