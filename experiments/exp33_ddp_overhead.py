@@ -158,25 +158,32 @@ def run(args):
     }
     log(json.dumps(result, indent=2))
     os.makedirs("results", exist_ok=True)
-    fn = f"results/exp33_ddp_rank{rank}.json"
+    fn = getattr(args, "out_prefix", None) and f"{args.out_prefix}_rank{rank}.json" \
+        or f"results/exp33_ddp_rank{rank}.json"
+    if os.path.exists(fn) and not getattr(args, "force", False):
+        raise SystemExit(
+            f"refusing to overwrite existing {fn}. Pass --out_prefix <prefix> for "
+            f"different filenames, or --force to overwrite."
+        )
     with open(fn, "w") as f:
         json.dump(result, f, indent=2)
     log(f"saved -> {fn}")
 
     dist.barrier()
     if rank == 0:
-        aggregate(world_size)
+        aggregate(world_size, getattr(args, "out_prefix", None), getattr(args, "force", False))
     dist.destroy_process_group()
 
 
-def aggregate(world_size):
+def aggregate(world_size, out_prefix=None, force=False):
     """Rank-0-only, no GPU/collective work: read every rank's own JSON and
     confirm (a) overhead is consistent across ranks, (b) logged sample_index
     sets are disjoint -- i.e. no rank ever saw another rank's data."""
+    prefix = out_prefix or "results/exp33_ddp"
     results = []
     index_ranges = []
     for r in range(world_size):
-        fn = f"results/exp33_ddp_rank{r}.json"
+        fn = f"{prefix}_rank{r}.json"
         if not os.path.exists(fn):
             print(f"[aggregate] missing {fn}, skipping full aggregation")
             return
@@ -200,7 +207,10 @@ def aggregate(world_size):
     }
     print("\n=== DDP aggregate ===")
     print(json.dumps(summary, indent=2))
-    with open("results/exp33_ddp_summary.json", "w") as f:
+    summary_fn = f"{prefix}_summary.json"
+    if os.path.exists(summary_fn) and not force:
+        raise SystemExit(f"refusing to overwrite existing {summary_fn}. Pass --force to overwrite.")
+    with open(summary_fn, "w") as f:
         json.dump(summary, f, indent=2)
     print("saved -> results/exp33_ddp_summary.json")
 
@@ -220,6 +230,10 @@ def main():
     ap.add_argument("--proj_dim", type=int, default=512)
     ap.add_argument("--d", type=int, default=256)
     ap.add_argument("--n_blocks", type=int, default=2)
+    ap.add_argument("--out_prefix", default=None,
+                    help="prefix for output files, e.g. results/exp33_ddp_run2 "
+                         "(default: results/exp33_ddp)")
+    ap.add_argument("--force", action="store_true", help="overwrite existing output files")
     args = ap.parse_args()
     run(args)
 

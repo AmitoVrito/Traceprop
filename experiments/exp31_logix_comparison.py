@@ -44,6 +44,14 @@ def run(args):
     import logix
 
     device = args.device
+    if device == "cuda" and not getattr(args, "skip_gpu_check", False):
+        want = getattr(args, "gpu_check", "L4")
+        got = torch.cuda.get_device_name(0)
+        if want and want not in got:
+            raise SystemExit(
+                f"expected a GPU containing '{want}' but got '{got}' -- refusing to run "
+                f"(pass --gpu_check '' to disable, or --gpu_check <substring> to expect something else)."
+            )
 
     if args.backend == "tiny":
         torch.manual_seed(1234)
@@ -242,7 +250,13 @@ def run(args):
     }
     print(json.dumps(out, indent=2))
     os.makedirs("results", exist_ok=True)
-    fn = f"results/exp31_logix_{args.backend}_{out['model'].replace('/', '_')}.json"
+    fn = getattr(args, "out", None) or \
+        f"results/exp31_logix_{args.backend}_{out['model'].replace('/', '_')}.json"
+    if os.path.exists(fn) and not getattr(args, "force", False):
+        raise SystemExit(
+            f"refusing to overwrite existing {fn}. Pass --out <path> for a different "
+            f"filename, or --force to overwrite."
+        )
     with open(fn, "w") as f:
         json.dump(out, f, indent=2)
     print(f"\nsaved -> {fn}")
@@ -267,6 +281,10 @@ def main():
     ap.add_argument("--steps", type=int, default=20)
     ap.add_argument("--warmup", type=int, default=10)
     ap.add_argument("--repeats", type=int, default=20)
+    ap.add_argument("--out", default=None, help="output path override (default: auto from backend/model)")
+    ap.add_argument("--force", action="store_true", help="overwrite --out even if it already exists")
+    ap.add_argument("--gpu_check", default="L4", help="required substring in GPU name when device=cuda ('' to disable)")
+    ap.add_argument("--skip_gpu_check", action="store_true")
     args = ap.parse_args()
     run(args)
 

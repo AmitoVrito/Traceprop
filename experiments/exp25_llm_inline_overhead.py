@@ -149,6 +149,16 @@ def run(args):
     import torch.nn.functional as F
 
     device = args.device
+    if device == "cuda" and not getattr(args, "skip_gpu_check", False):
+        want = getattr(args, "gpu_check", "L4")
+        got = torch.cuda.get_device_name(0)
+        if want and want not in got:
+            raise SystemExit(
+                f"expected a GPU containing '{want}' but got '{got}' -- refusing to run, "
+                f"since mixing GPU types across tables makes percentages and post-hoc "
+                f"seconds incomparable (Table 1/2 and this sweep are all L4-only). Pass "
+                f"--gpu_check '' to disable, or --gpu_check <substring> to expect something else."
+            )
     if args.backend == "tiny":
         model, vocab, seq = build_tiny_model(
             d=args.d, n_blocks=args.n_blocks, seq=args.seq, r=args.rank
@@ -302,7 +312,14 @@ def run(args):
 
     os.makedirs("results", exist_ok=True)
     tag = f"track{args.track}"
-    out = f"results/exp25_{args.backend}_{result['model'].replace('/', '_')}_{tag}.json"
+    out = getattr(args, "out", None) or \
+        f"results/exp25_{args.backend}_{result['model'].replace('/', '_')}_{tag}.json"
+    if os.path.exists(out) and not getattr(args, "force", False):
+        raise SystemExit(
+            f"refusing to overwrite existing {out} (filenames are based on model/track, "
+            f"not steps/repeats/device, so a quick test run can silently clobber a real "
+            f"GPU result). Pass --out <path> for a different filename, or --force to overwrite."
+        )
     with open(out, "w") as f:
         json.dump(result, f, indent=2)
     print(f"\nsaved -> {out}")
@@ -331,6 +348,10 @@ def main():
     ap.add_argument("--proj_dim", type=int, default=2048)
     ap.add_argument("--dtype", choices=["fp32", "bf16", "fp16"], default="fp32",
                     help="model dtype (hf backend only); use bf16 for large models (e.g. Pythia-2.8B) on 24GB GPUs")
+    ap.add_argument("--out", default=None, help="output path override (default: auto from model/track)")
+    ap.add_argument("--force", action="store_true", help="overwrite --out even if it already exists")
+    ap.add_argument("--gpu_check", default="L4", help="required substring in GPU name when device=cuda ('' to disable)")
+    ap.add_argument("--skip_gpu_check", action="store_true")
     args = ap.parse_args()
     run(args)
 

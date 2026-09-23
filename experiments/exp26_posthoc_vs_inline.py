@@ -57,6 +57,16 @@ def run(args):
     import torch.nn.functional as F
 
     device = args.device
+    if device == "cuda" and not getattr(args, "skip_gpu_check", False):
+        want = getattr(args, "gpu_check", "L4")
+        got = torch.cuda.get_device_name(0)
+        if want and want not in got:
+            raise SystemExit(
+                f"expected a GPU containing '{want}' but got '{got}' -- refusing to run, "
+                f"since mixing GPU types across tables makes percentages and post-hoc "
+                f"seconds incomparable (Table 1/2 and the sweep are all L4-only). Pass "
+                f"--gpu_check '' to disable, or --gpu_check <substring> to expect something else."
+            )
     model, vocab, seq = build_model(args, device)
 
     # Fixed "training set" of N samples, iterated in batches.
@@ -200,7 +210,13 @@ def run(args):
 
     os.makedirs("results", exist_ok=True)
     tag = f"track{args.track}"
-    out = f"results/exp26_{args.backend}_{result['model'].replace('/', '_')}_{tag}.json"
+    out = getattr(args, "out", None) or \
+        f"results/exp26_{args.backend}_{result['model'].replace('/', '_')}_{tag}.json"
+    if os.path.exists(out) and not getattr(args, "force", False):
+        raise SystemExit(
+            f"refusing to overwrite existing {out}. Pass --out <path> for a different "
+            f"filename, or --force to overwrite."
+        )
     with open(out, "w") as f:
         json.dump(result, f, indent=2)
     print(f"\nsaved -> {out}")
@@ -225,6 +241,10 @@ def main():
                     help="TRAK ensembles over K trained checkpoints → K post-hoc passes")
     ap.add_argument("--d", type=int, default=256, help="tiny model width")
     ap.add_argument("--n_blocks", type=int, default=2, help="tiny model depth")
+    ap.add_argument("--out", default=None, help="output path override (default: auto from model/track)")
+    ap.add_argument("--force", action="store_true", help="overwrite --out even if it already exists")
+    ap.add_argument("--gpu_check", default="L4", help="required substring in GPU name when device=cuda ('' to disable)")
+    ap.add_argument("--skip_gpu_check", action="store_true")
     args = ap.parse_args()
     run(args)
 
