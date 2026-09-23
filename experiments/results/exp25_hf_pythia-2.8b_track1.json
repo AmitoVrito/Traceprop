@@ -1,0 +1,20 @@
+{
+  "backend": "hf",
+  "model": "EleutherAI/pythia-2.8b",
+  "dtype": "bf16",
+  "device": "cuda",
+  "steps": 200,
+  "repeats": 20,
+  "batch": 16,
+  "seq": 64,
+  "rank": 8,
+  "proj_dim": 512,
+  "track_last_n_blocks": 1,
+  "per_sample_grad_dim": 122880,
+  "base_step_ms": 332.623,
+  "overhead_pct": 0.106,
+  "overhead_std": 0.166,
+  "throughput_overhead_pct": 0.329,
+  "throughput_overhead_std": 0.109,
+  "note": "GPU: NVIDIA L4, 23034 MiB. bf16 used to fit LoRA fine-tuning on 24GB. Reconstructed from Colab notebook output cell (exp31_logix_comparison_colab.ipynb, cell 12)."
+}

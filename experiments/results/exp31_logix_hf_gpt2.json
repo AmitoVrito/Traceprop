@@ -1,0 +1,35 @@
+{
+  "tool": "logix (logix-project/logix, logix-ai package)",
+  "backend": "hf",
+  "model": "gpt2",
+  "device": "cuda",
+  "tracked_modules_count": 6,
+  "track_last_n_blocks": 1,
+  "steps": 200,
+  "repeats": 20,
+  "warmup": 10,
+  "configs": {
+    "logix_default_disk": {
+      "save_to_disk": true,
+      "base_step_ms": 28.9307,
+      "overhead_pct_median": 20.404,
+      "overhead_pct_std": 25.034,
+      "peak_mem_mb_baseline": 834.93,
+      "peak_mem_mb_logix": 830.68
+    },
+    "matched_buffering": {
+      "save_to_disk": false,
+      "base_step_ms": 29.7044,
+      "overhead_pct_median": 6.684,
+      "overhead_pct_std": 0.577,
+      "peak_mem_mb_baseline": 839.02,
+      "peak_mem_mb_logix": 834.93
+    }
+  },
+  "comparison": {
+    "traceprop_throughput_overhead_pct": 1.084,
+    "traceprop_throughput_overhead_std": 0.14,
+    "logix_matched_buffering_vs_traceprop_ratio": 6.17
+  },
+  "note": "GPU: NVIDIA L4. logix-ai installed via --ignore-requires-python (its setup.py caps python<3.11; verified pure-Python wheel, no incompatible API, smoke-tested before this run). Reconstructed from Colab notebook output cell (exp31_logix_comparison_colab.ipynb, cell 8). Known gaps: bytes-per-example not matched between the two projections; LDS-on-LogIX not measured; single model (GPT-2) only."
+}
