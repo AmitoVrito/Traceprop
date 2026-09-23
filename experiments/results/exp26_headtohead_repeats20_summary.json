@@ -1,0 +1,31 @@
+{
+  "note": "Reconstructed from Colab console summary output (cell-20 of exp25_llm_inline_overhead_colab.ipynb), not the raw per-model JSON files. repeats=20 (fixed from the under-powered repeats=5 default). n_samples=512 (384 for pythia-1b), batch=8, seq=128, proj_dim=512, track=1, trak_ckpts=5.",
+  "results": {
+    "gpt2": {
+      "inline_flush_s": 0.106,
+      "inline_flush_overhead_pct": 1.66,
+      "posthoc_pass_s": 6.40,
+      "speedup_vs_logra_1ckpt": 60.1,
+      "speedup_vs_trak_5ckpt": 300.6
+    },
+    "EleutherAI/pythia-410m": {
+      "inline_flush_s": 0.098,
+      "inline_flush_overhead_pct": 0.71,
+      "posthoc_pass_s": 13.79,
+      "speedup_vs_logra_1ckpt": 141.0,
+      "speedup_vs_trak_5ckpt": 704.9
+    },
+    "EleutherAI/pythia-1b": {
+      "inline_flush_s": 0.086,
+      "inline_flush_overhead_pct": 0.41,
+      "posthoc_pass_s": 20.89,
+      "speedup_vs_logra_1ckpt": 242.3,
+      "speedup_vs_trak_5ckpt": 1211.4
+    }
+  },
+  "comparison_to_prior_repeats5_run": {
+    "gpt2":  {"old_logra_x": 63.2,  "new_logra_x": 60.1,  "old_trak_x": 315.9, "new_trak_x": 300.6},
+    "pythia-410m": {"old_logra_x": 148.2, "new_logra_x": 141.0, "old_trak_x": 741.0, "new_trak_x": 704.9},
+    "pythia-1b": {"old_logra_x": 249.0, "new_logra_x": 242.3, "old_trak_x": 1245.0, "new_trak_x": 1211.4}
+  }
+}
