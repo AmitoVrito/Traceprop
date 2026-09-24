@@ -95,21 +95,39 @@ def run_one_seed(args, seed, device, torch, F, GradientStore, LoRAGradientLogger
     trigger_len = min(args.trigger_len, len(trigger_ids))
     trigger_ids = trigger_ids[:trigger_len]
 
+    plant_trigger_overflow_count = [0]  # rows with no room to APPEND (had to overwrite content)
+
     def plant_trigger(X):
-        """Overwrite the LAST `trigger_len` tokens of REAL content (right
-        before the first pad token, if any) -- not the literal last array
-        index, which can silently be padding. No padding concept on the
-        tiny/synthetic backend, so this reduces to the literal tail there."""
+        """APPEND the trigger into the first pad positions right after real
+        content -- does NOT touch real tokens. Overwriting real content (the
+        earlier version) can silently erase the actual sentiment-bearing
+        words of a short SST-2 sentence, which would make a "distractor"
+        (trigger present, label kept) into an accidentally-noisy-labeled
+        example for a reason that has nothing to do with attribution.
+        GPT2ForSequenceClassification pools the LAST NON-PAD token, which
+        after appending is the end of the trigger -- the model sees the
+        trigger the same way whether appended or (in the fallback) the tail
+        was overwritten. Only overwrites the tail when a row has no padding
+        room left for the full trigger (tracked in
+        plant_trigger_overflow_count for logging). No padding concept on
+        the tiny/synthetic backend, so every row hits that fallback there
+        by construction -- expected, not a bug, and logged as such."""
         X = X.copy()
         if pad_id is None:
             X[:, -trigger_len:] = trigger_ids
+            plant_trigger_overflow_count[0] += len(X)
             return X
         for i in range(len(X)):
             row = X[i]
             pad_positions = np.where(row == pad_id)[0]
-            end = int(pad_positions[0]) if len(pad_positions) > 0 else len(row)
-            start = max(0, end - trigger_len)
-            X[i, start:end] = trigger_ids[:end - start]
+            content_end = int(pad_positions[0]) if len(pad_positions) > 0 else len(row)
+            available_pad = len(row) - content_end
+            if available_pad >= trigger_len:
+                X[i, content_end:content_end + trigger_len] = trigger_ids
+            else:
+                plant_trigger_overflow_count[0] += 1
+                start = max(0, len(row) - trigger_len)
+                X[i, start:] = trigger_ids[:len(row) - start]
         return X
 
     # --- PRIMARY: plant K backdoor examples (trigger + forced target label) ---
@@ -140,6 +158,11 @@ def run_one_seed(args, seed, device, torch, F, GradientStore, LoRAGradientLogger
     ytr_poisoned[backdoor_idx] = args.backdoor_target_label
     Xtr_poisoned[distractor_idx] = plant_trigger(Xtr[distractor_idx])
     # distractor labels UNCHANGED -- that's the point
+    train_trigger_rows = k_backdoor + len(distractor_idx)
+    train_overflow = plant_trigger_overflow_count[0]
+    print(f"[exp37] trigger overflow (had to overwrite real content, no pad room to append): "
+          f"{train_overflow}/{train_trigger_rows} train rows "
+          f"({100 * train_overflow / train_trigger_rows:.1f}%)")
     for i in mislabel_idx:
         wrong = rng.integers(0, n_classes - 1)
         if wrong >= ytr[i]:
@@ -188,16 +211,28 @@ def run_one_seed(args, seed, device, torch, F, GradientStore, LoRAGradientLogger
         model.eval()
         with torch.no_grad():
             for s in range(0, len(X), args.batch):
-                xb = torch.tensor(X[s:s + args.batch], device=device)
+                xb_np = X[s:s + args.batch]
+                xb = torch.tensor(xb_np, device=device)
                 logits(model, xb)
                 rep = captured[-1]
                 if rep.dim() == 3:
-                    # hf backend: head is applied per-token (batch, seq, hidden) --
-                    # the model itself pools AFTER the head via last-non-pad-position
-                    # selection on the output; mean-pool over sequence here instead
-                    # (a valid representation for a similarity baseline; doesn't need
-                    # to exactly reproduce the model's own pooling mechanism).
-                    rep = rep.mean(dim=1)
+                    # hf backend: head is applied per-token (batch, seq, hidden).
+                    # Pool at the LAST NON-PAD token -- the exact position
+                    # GPT2ForSequenceClassification itself uses to classify --
+                    # not a mean over the sequence (which dilutes the signal
+                    # with padding and makes this baseline unfairly weak,
+                    # understating what a real "does the representation look
+                    # similar" baseline could achieve).
+                    if pad_id is not None:
+                        last_idx = []
+                        for row in xb_np:
+                            pad_positions = np.where(row == pad_id)[0]
+                            idx = int(pad_positions[0]) - 1 if len(pad_positions) > 0 else len(row) - 1
+                            last_idx.append(max(idx, 0))
+                        last_idx_t = torch.tensor(last_idx, device=device)
+                        rep = rep[torch.arange(rep.shape[0], device=device), last_idx_t]
+                    else:
+                        rep = rep[:, -1, :]
                 reprs.append(rep.cpu().numpy())
         model.train()
         h.remove()
@@ -378,6 +413,8 @@ def run_one_seed(args, seed, device, torch, F, GradientStore, LoRAGradientLogger
         "backdoor_success_rate": backdoor_success_rate,
         "clean_target_rate": clean_target_rate,
         "backdoor_random_auc": backdoor_auc_random,
+        "trigger_overflow_rows": train_overflow,
+        "trigger_overflow_total_rows": train_trigger_rows,
         "backdoor": backdoor_results,
         "mislabel": mislabel_results,
     }
@@ -447,6 +484,8 @@ def run(args):
         "backdoor_success_rate": agg_scalar("backdoor_success_rate"),
         "clean_target_rate": agg_scalar("clean_target_rate"),
         "backdoor_random_auc": agg_scalar("backdoor_random_auc"),
+        "trigger_overflow_rows_total": sum(r["trigger_overflow_rows"] for r in per_seed),
+        "trigger_overflow_denominator_total": sum(r["trigger_overflow_total_rows"] for r in per_seed),
         "primary_backdoor": backdoor_agg,
         "secondary_mislabel": mislabel_agg,
         "note": "backdoor AUC reported as dot/cosine/trak, each with and without the "
