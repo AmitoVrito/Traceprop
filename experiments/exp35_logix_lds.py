@@ -98,7 +98,7 @@ def run(args):
         torch.manual_seed(1234)
         np.random.seed(1234)
         if args.backend == "tiny":
-            m = build_tiny_classifier(vocab, seq=args.seq, r=args.rank)
+            m = build_tiny_classifier(vocab, seq=args.seq, r=args.rank, n_blocks=args.n_blocks)
         else:
             m = build_hf_classifier(args.model, r=args.rank)
         return m.to(device)
@@ -177,12 +177,22 @@ def run(args):
     logix_model = copy.deepcopy(target_model)
 
     if args.backend == "tiny":
+        # respect --track properly (last N blocks, or all if track<=0) --
+        # previously hardcoded to "score + last block only" regardless of
+        # --track, which silently ignored the flag on this backend and made
+        # a track={1,N,0} scope sweep impossible.
         tracked_names = [
             n for n, m in logix_model.named_modules()
-            if isinstance(m, nn.Linear)
-            and (n == "score" or (f"blocks.{len(logix_model.blocks) - 1}." in n
-                                   and ("lora_A" in n or "lora_B" in n)))
+            if isinstance(m, nn.Linear) and (n == "score" or "lora_A" in n or "lora_B" in n)
         ]
+        if args.track > 0:
+            import re as _re
+            def _block_idx(name):
+                m = _re.search(r"blocks\.(\d+)\.", name)
+                return int(m.group(1)) if m else None
+            idxs = sorted({_block_idx(n) for n in tracked_names if _block_idx(n) is not None})
+            keep = set(idxs[-args.track:])
+            tracked_names = [n for n in tracked_names if n == "score" or _block_idx(n) in keep]
     else:
         tracked_names = [
             n for n, m in logix_model.named_modules()
@@ -478,6 +488,7 @@ def main():
     ap.add_argument("--seq", type=int, default=32)
     ap.add_argument("--vocab", type=int, default=50)
     ap.add_argument("--rank", type=int, default=8)
+    ap.add_argument("--n_blocks", type=int, default=2, help="tiny backend model depth")
     ap.add_argument("--proj_dim", type=int, default=512)
     ap.add_argument("--track", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
