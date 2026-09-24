@@ -244,6 +244,16 @@ class GradientStore:
     def __len__(self) -> int:
         return len(self._entries)
 
+    def clear(self) -> None:
+        """Drop all logged entries, keeping the fitted projection matrix.
+
+        Every entry is keyed by a fresh UUID, never overwritten by reuse of
+        the same sample_index, so a store fed by repeated benchmark loops
+        (rather than one real pass over a dataset) grows without bound
+        unless something calls this between iterations.
+        """
+        self._entries = {}
+
     def stats(self) -> dict:
         return {
             "entries": len(self._entries),

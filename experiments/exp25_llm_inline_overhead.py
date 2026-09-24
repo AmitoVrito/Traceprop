@@ -237,6 +237,7 @@ def run(args):
         logger.flush_step(sample_indices=range(step * args.batch, (step + 1) * args.batch))
         opt.step()
     sync()
+    store.clear()
     grad_dim = logger.grad_dim
     train_steps(args.warmup)  # warm baseline path
 
@@ -262,11 +263,19 @@ def run(args):
         return time.perf_counter() - t0
 
     def measure(per_step_sync):
-        """Interleaved, repeated overhead measurement → (median%, std%, base_s)."""
+        """Interleaved, repeated overhead measurement → (median%, std%, base_s).
+
+        Every use_logger=True block() call flushes args.steps * args.batch
+        fresh entries into `store`, each keyed by a new UUID (never
+        overwritten), so nothing here reuses old entries -- store.clear()
+        after each block is required to keep memory bounded to one block's
+        worth instead of growing across all repeats * both measure() calls.
+        """
         overheads, base_times = [], []
         for _ in range(args.repeats):
             b = block(False, per_step_sync)
             i = block(True, per_step_sync)
+            store.clear()
             overheads.append((i - b) / b * 100.0)
             base_times.append(b)
         med = statistics.median(overheads)
@@ -277,8 +286,12 @@ def run(args):
     thru_med, thru_std, thru_base, thru_all = measure(per_step_sync=False)
     logger.detach()
 
+    # store is cleared after every block() above, so its size no longer
+    # reflects real accumulated state -- report the (constant, per-block)
+    # footprint analytically instead of reading it off the (now empty) store.
     stored_dim = store._proj_dim  # sketch_dim if factored, else proj_dim
-    store_bytes = len(store) * stored_dim * 4  # float32
+    samples_logged = args.steps * args.batch
+    store_bytes = samples_logged * stored_dim * 4  # float32
     base_step_ms = synced_base / args.steps * 1e3
 
     result = {
@@ -297,7 +310,7 @@ def run(args):
         "track_last_n_blocks": args.track,
         "n_tracked_layers": len(targets),
         "per_sample_grad_dim": grad_dim,
-        "samples_logged": len(store),
+        "samples_logged": samples_logged,
         "store_bytes": store_bytes,
         "store_mb": round(store_bytes / 1e6, 3),
         "base_step_ms": round(base_step_ms, 3),
