@@ -466,6 +466,26 @@ def run_one_seed(args, seed, device, torch, F, GradientStore, LoRAGradientLogger
               f"something else, e.g. the label-sign artifact auc_within_target is designed "
               f"to avoid).")
 
+    # Raw per-example arrays -- lets every metric above (and any metric someone
+    # thinks of later) be recomputed from saved data without another GPU run.
+    # This is exactly what would have made the auc_poison_vs_distractor ->
+    # auc_within_target fix free to re-derive from an already-completed run,
+    # instead of needing to rerun the GPU job to get the corrected numbers.
+    raw = {
+        "ytr_poisoned": ytr_poisoned,
+        "is_backdoor": is_backdoor,
+        "is_distractor": is_distractor,
+        "is_mislabel": is_mislabel,
+        "backdoor_success_rate": backdoor_success_rate,
+        "clean_target_rate": clean_target_rate,
+        "final_losses": final_losses,
+        "grad_norm": np.linalg.norm(G_train, axis=1),
+        "self_infl_dot": self_influence_dot(G_train),
+        "self_infl_trak": self_influence_trak(G_train),
+    }
+    for name, scores in score_variants.items():
+        raw[f"score_{name}"] = np.asarray(scores)
+
     return {
         "n_train": n_train, "k_backdoor": k_backdoor, "k_distractor": len(distractor_idx),
         "k_mislabel": len(mislabel_idx),
@@ -479,6 +499,7 @@ def run_one_seed(args, seed, device, torch, F, GradientStore, LoRAGradientLogger
         "trigger_overflow_total_rows": train_trigger_rows,
         "backdoor": backdoor_results,
         "mislabel": mislabel_results,
+        "raw": raw,
     }
 
 
@@ -609,8 +630,20 @@ def run(args):
     with open(fn, "w") as f:
         json.dump(out, f, indent=2)
     print(f"\nsaved -> {fn}")
-    np.savez(npz_fn, per_seed=np.array(per_seed, dtype=object))
-    print(f"saved -> {npz_fn} (per-seed raw results)")
+
+    # Flatten each seed's raw per-example arrays into top-level, seed-indexed
+    # keys -- ergonomic to load selectively (np.load(...)['seed0_score_dot'])
+    # without wrestling with a pickled object array. per_seed (with metrics,
+    # not raw arrays) is also included whole, for anything not covered above.
+    npz_arrays = {"per_seed_summary": np.array(
+        [{k: v for k, v in r.items() if k != "raw"} for r in per_seed], dtype=object)}
+    for si, r in enumerate(per_seed):
+        for key, arr in r["raw"].items():
+            npz_arrays[f"seed{si}_{key}"] = np.asarray(arr)
+    np.savez(npz_fn, **npz_arrays)
+    print(f"saved -> {npz_fn} (per-seed raw per-example arrays: every score variant, "
+          f"y_train, is_backdoor/is_distractor/is_mislabel, backdoor_success_rate, "
+          f"clean_target_rate -- lets any metric be recomputed without another GPU run)")
     return out
 
 
