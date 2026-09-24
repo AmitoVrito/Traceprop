@@ -198,7 +198,26 @@ def run(args):
         run_.config.lora.init = init_strategy
         # rank left at LogIX's own natural default (LoRAConfig.rank=64, no
         # override) -- see the measure_bytes_per_example() note above.
+        trainable_before_watch = {id(p) for p in trainable}
         run_.watch(model, name_filter=tracked_names, type_filter=[nn.Linear])
+        # watch() (logix/logix.py:144) sets requires_grad=False on every
+        # parameter in every module OUTSIDE the tracked scope, "to save
+        # GPU memory/compute for large models" -- a real LogIX behavior,
+        # not a bug in LogIX itself, but it silently makes this comparison
+        # unfair for track < all: the LogIX-timed model then does
+        # backward+optimizer work over only the tracked subset, while the
+        # separately-built baseline model (never touched by watch()) still
+        # trains its FULL LoRA parameter set across every block. Confirmed
+        # this was the exact cause of the impossible negative "overhead"
+        # numbers first measured (-36.7% at track=1, -23.7% at track=6,
+        # vs. a genuine +1.9% at track=0 where nothing gets frozen since
+        # everything is tracked -- exactly the gradient this freezing bug
+        # predicts). Restore requires_grad on every originally-trainable
+        # parameter so both models do identical real training work and
+        # only the logging/projection cost is what gets measured.
+        for p in model.parameters():
+            if id(p) in trainable_before_watch:
+                p.requires_grad = True
 
         covariance_pass_s = 0.0
         if init_strategy == "pca":
