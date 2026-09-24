@@ -131,22 +131,41 @@ def run_one_seed(args, seed, device, torch, F, GradientStore, LoRAGradientLogger
         return X
 
     # --- PRIMARY: plant K backdoor examples (trigger + forced target label) ---
+    # Sampled ONLY from the non-target class, so every planted example is a REAL
+    # label flip. Sampling from all classes (the earlier version) meant ~half of
+    # "poisoned" examples already had the target label -- the trigger was added
+    # but nothing about the label actually changed, so ground truth called a
+    # clean example "poisoned" for no reason. That inflated every baseline
+    # (including repr_similarity, which hit AUC~0.97 in the smoke test) since
+    # token/representation matching correctly finds trigger-bearing examples
+    # regardless of whether they were actually flipped -- the inflation was in the
+    # ground truth, not a sign attribution was failing to add anything.
+    non_target_pool = np.where(ytr != args.backdoor_target_label)[0]
     k_backdoor = max(1, int(args.plant_frac * n_train))
-    backdoor_idx = rng.choice(n_train, size=k_backdoor, replace=False)
+    k_backdoor = min(k_backdoor, len(non_target_pool))
+    backdoor_idx = rng.choice(non_target_pool, size=k_backdoor, replace=False)
     is_backdoor = np.zeros(n_train, dtype=bool)
     is_backdoor[backdoor_idx] = True
 
-    # --- distractors: trigger present, label UNCHANGED -- token/representation
-    # matching can't distinguish these from the poisoned set; attribution should ---
-    remaining_after_backdoor = np.setdiff1d(np.arange(n_train), backdoor_idx)
+    # --- distractors: trigger present, TRUE (non-target) label kept -- these
+    # examples argue AGAINST the backdoor (trigger present but the model should
+    # NOT predict the target), so a real attribution method should give them
+    # NEGATIVE influence on a triggered target-label prediction, while a
+    # token/representation-matching baseline (which only sees "trigger present")
+    # cannot tell them apart from the poisoned set. Sampled from the SAME
+    # non-target pool as backdoor_idx, disjoint from it, and kept at a LOWER
+    # rate than plant_frac (default distractor_frac=0.02 vs plant_frac=0.05) so
+    # the trigger still mostly co-occurs with the target label during training
+    # and the backdoor still gets learned.
+    non_target_remaining = np.setdiff1d(non_target_pool, backdoor_idx)
     k_distractor = max(1, int(args.distractor_frac * n_train))
-    distractor_idx = rng.choice(remaining_after_backdoor,
-                                 size=min(k_distractor, len(remaining_after_backdoor)), replace=False)
+    k_distractor = min(k_distractor, len(non_target_remaining))
+    distractor_idx = rng.choice(non_target_remaining, size=k_distractor, replace=False)
     is_distractor = np.zeros(n_train, dtype=bool)
     is_distractor[distractor_idx] = True
 
     # --- SECONDARY: mislabeled examples, disjoint from backdoor AND distractor ---
-    remaining = np.setdiff1d(remaining_after_backdoor, distractor_idx)
+    remaining = np.setdiff1d(np.arange(n_train), np.union1d(backdoor_idx, distractor_idx))
     k_mislabel = max(1, int(args.mislabel_frac * n_train))
     mislabel_idx = rng.choice(remaining, size=min(k_mislabel, len(remaining)), replace=False)
     is_mislabel = np.zeros(n_train, dtype=bool)
@@ -357,14 +376,25 @@ def run_one_seed(args, seed, device, torch, F, GradientStore, LoRAGradientLogger
 
     backdoor_results = {}
     not_mislabeled = ~is_mislabel
+    # trigger-bearing-only mask: poisoned vs distractor, everything else excluded.
+    # Token/representation matching scores exactly 0.5 here by construction (both
+    # groups contain the trigger); a real attribution method should score well
+    # above 0.5 by giving distractors (argue AGAINST the backdoor) LOWER --
+    # possibly negative -- scores than poisoned examples (argue FOR it). This is
+    # the single number that isolates what attribution specifically contributes,
+    # separate from "can you find the trigger at all."
+    trigger_bearing = is_backdoor | is_distractor
     for name, scores in score_variants.items():
         auc_all = float(roc_auc_score(is_backdoor, scores))
         p_at_k_all = precision_at_k(scores, is_backdoor, k_backdoor)
         auc_excl = float(roc_auc_score(is_backdoor[not_mislabeled], scores[not_mislabeled]))
         p_at_k_excl = precision_at_k(scores[not_mislabeled], is_backdoor[not_mislabeled], k_backdoor)
+        auc_poison_vs_distractor = float(roc_auc_score(
+            is_backdoor[trigger_bearing], scores[trigger_bearing]))
         backdoor_results[name] = {
             "auc": round(auc_all, 4), "precision_at_k": round(p_at_k_all, 4),
             "auc_excl_mislabel": round(auc_excl, 4), "precision_at_k_excl_mislabel": round(p_at_k_excl, 4),
+            "auc_poison_vs_distractor": round(auc_poison_vs_distractor, 4),
         }
     backdoor_auc_random = float(roc_auc_score(is_backdoor, rng3.standard_normal(n_train)))
 
@@ -444,7 +474,8 @@ def run(args):
         print(f"  backdoor_success={r['backdoor_success_rate']:.4f} "
               f"clean_control={r['clean_target_rate']:.4f} overhead={r['overhead_pct']:.2f}%")
         for name, v in r["backdoor"].items():
-            print(f"  backdoor-{name}: AUC={v['auc']:.4f} (excl_mislabel={v['auc_excl_mislabel']:.4f})")
+            print(f"  backdoor-{name}: AUC={v['auc']:.4f} (excl_mislabel={v['auc_excl_mislabel']:.4f}, "
+                  f"poison_vs_distractor={v['auc_poison_vs_distractor']:.4f})")
         per_seed.append(r)
 
     def agg_scalar(name):
@@ -454,7 +485,8 @@ def run(args):
     backdoor_agg = {}
     for name in per_seed[0]["backdoor"]:
         backdoor_agg[name] = {}
-        for metric in ("auc", "precision_at_k", "auc_excl_mislabel", "precision_at_k_excl_mislabel"):
+        for metric in ("auc", "precision_at_k", "auc_excl_mislabel", "precision_at_k_excl_mislabel",
+                       "auc_poison_vs_distractor"):
             vals = [r["backdoor"][name][metric] for r in per_seed]
             backdoor_agg[name][metric] = {"mean": round(float(np.mean(vals)), 4), "std": round(float(np.std(vals)), 4)}
 
@@ -488,13 +520,19 @@ def run(args):
         "trigger_overflow_denominator_total": sum(r["trigger_overflow_total_rows"] for r in per_seed),
         "primary_backdoor": backdoor_agg,
         "secondary_mislabel": mislabel_agg,
-        "note": "backdoor AUC reported as dot/cosine/trak, each with and without the "
-                "mislabeled set in the candidate pool (mislabeled examples have large "
-                "gradients that could otherwise dominate a raw dot-product ranking). "
-                "distractors (trigger present, correct label kept) are counted as "
-                "negatives in every backdoor AUC -- token/representation matching alone "
-                "cannot separate them from poisoned examples; repr_similarity is reported "
-                "as exactly that baseline for direct comparison.",
+        "note": "backdoor and distractor examples are both sampled ONLY from the non-target "
+                "class, so every 'poisoned' example is a real label flip and every "
+                "distractor keeps its TRUE (non-target) label while carrying the trigger -- "
+                "distractors argue AGAINST the backdoor and should get LOW/negative "
+                "attribution scores, not just fail to stand out. backdoor AUC reported as "
+                "dot/cosine/trak, each with and without the mislabeled set in the candidate "
+                "pool (mislabeled examples have large gradients that could otherwise "
+                "dominate a raw dot-product ranking), AND as auc_poison_vs_distractor -- "
+                "ranking ONLY the trigger-bearing examples (poisoned vs. distractor), where "
+                "token/representation matching scores exactly 0.5 by construction (both "
+                "groups contain the trigger) and only a real attribution signal can do "
+                "better. repr_similarity is reported as exactly that matching baseline for "
+                "direct comparison across all four AUC variants.",
     }
     print(json.dumps(out, indent=2))
 
@@ -528,9 +566,12 @@ def main():
                          "to leave clean as a control) at test time")
     ap.add_argument("--plant_frac", type=float, default=0.05,
                     help="fraction of training examples planted as backdoor (primary)")
-    ap.add_argument("--distractor_frac", type=float, default=0.05,
-                    help="fraction planted with the trigger but CORRECT label kept -- "
-                         "defeats token/representation-matching baselines")
+    ap.add_argument("--distractor_frac", type=float, default=0.02,
+                    help="fraction (non-target class) planted with the trigger but TRUE "
+                         "label kept -- argues AGAINST the backdoor, defeating token/"
+                         "representation-matching baselines; kept below plant_frac so the "
+                         "trigger still mostly co-occurs with the target label and the "
+                         "backdoor still gets learned")
     ap.add_argument("--mislabel_frac", type=float, default=0.05,
                     help="fraction of (remaining) training examples planted as mislabeled (secondary)")
     ap.add_argument("--trigger_len", type=int, default=5,
