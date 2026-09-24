@@ -358,7 +358,13 @@ def run_one_seed(args, seed, device, torch, F, GradientStore, LoRAGradientLogger
 
     def trak_correct(G_tr, G_te, lam=None):
         d = G_tr.shape[1]
-        lam = lam if lam is not None else 1e-2 * np.trace(G_tr.T @ G_tr) / d
+        # G_tr.T @ G_tr is rank <= n_train, so it's exactly singular whenever
+        # n_train < d (e.g. the dry-run smoke test's 32 examples against the
+        # default proj_dim=512) -- floor lam so the solve stays well
+        # conditioned instead of producing NaN through the trace-scaled term
+        # alone, which vanishes with it when gradients are small early in
+        # training.
+        lam = lam if lam is not None else max(1e-2 * np.trace(G_tr.T @ G_tr) / d, 1e-6)
         H = G_tr.T @ G_tr + lam * np.eye(d, dtype=np.float32)
         return G_te @ np.linalg.solve(H, G_tr.T)
 
