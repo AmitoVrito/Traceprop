@@ -198,8 +198,6 @@ def run(args):
         run_.config.lora.init = init_strategy
         # rank left at LogIX's own natural default (LoRAConfig.rank=64, no
         # override) -- see the measure_bytes_per_example() note above.
-        trainable_before_watch = {id(p) for p in trainable}
-        run_.watch(model, name_filter=tracked_names, type_filter=[nn.Linear])
         # watch() (logix/logix.py:144) sets requires_grad=False on every
         # parameter in every module OUTSIDE the tracked scope, "to save
         # GPU memory/compute for large models" -- a real LogIX behavior,
@@ -212,12 +210,24 @@ def run(args):
         # numbers first measured (-36.7% at track=1, -23.7% at track=6,
         # vs. a genuine +1.9% at track=0 where nothing gets frozen since
         # everything is tracked -- exactly the gradient this freezing bug
-        # predicts). Restore requires_grad on every originally-trainable
-        # parameter so both models do identical real training work and
-        # only the logging/projection cost is what gets measured.
-        for p in model.parameters():
-            if id(p) in trainable_before_watch:
-                p.requires_grad = True
+        # predicts). Restore requires_grad after every watch() call so both
+        # models do identical real training work and only the
+        # logging/projection cost is what gets measured -- add_lora()
+        # calls watch() a SECOND time internally (logix.py:228, default
+        # watch=True), re-freezing everything again after a first restore
+        # right after the explicit watch() call above would be undone by
+        # it (confirmed: a restore placed only after the explicit call
+        # here had zero measurable effect), so this must run after EVERY
+        # watch() invocation, including add_lora()'s internal one below.
+        trainable_before_watch = {id(p) for p in trainable}
+
+        def restore_trainable():
+            for p in model.parameters():
+                if id(p) in trainable_before_watch:
+                    p.requires_grad = True
+
+        run_.watch(model, name_filter=tracked_names, type_filter=[nn.Linear])
+        restore_trainable()
 
         covariance_pass_s = 0.0
         if init_strategy == "pca":
@@ -258,6 +268,7 @@ def run(args):
         # Calling add_lora() a SECOND time on an already-wrapped model wraps
         # the wrapper (confirmed empirically) -- hence a brand-new model here.
         run_.add_lora()
+        restore_trainable()  # add_lora()'s internal watch() re-froze non-tracked params again
         assert_pca_init_took_effect(run_, init_strategy)
         # {"grad": ["log"]} only -- deliberately NOT requesting "covariance" or
         # "hessian" statistics during the TIMED logging pass below. LogIX's
