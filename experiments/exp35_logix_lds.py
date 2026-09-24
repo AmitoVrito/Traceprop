@@ -263,6 +263,36 @@ def run(args):
     effective_init = args.lora_init if hessian_ok else "random"
     assert_pca_init_took_effect(run_, effective_init)
 
+    # --- SECOND covariance pass, AFTER add_lora(), on the WRAPPED module
+    # names. The pass above (pre-add_lora) covers PCA init, which needs
+    # covariance keyed by the ORIGINAL module names (LoRAHandler.add_lora()
+    # reads it that way). But compute_influence_all's precondition() step at
+    # scoring time looks up covariance by whatever module names are IN THE
+    # LOGGED DATA -- which, after add_lora(), are the WRAPPED
+    # "...logix_lora_B" names, not the originals. Reusing the pre-add_lora
+    # covariance state for that lookup silently fails: LogIX's own
+    # precondition() finds a key mismatch, logs "Not all covariances have
+    # been computed" as a WARNING (not an exception), and returns src_log
+    # UNCHANGED -- confirmed empirically by comparing logix_dot and
+    # logix_preconditioned score arrays byte-for-byte after a real run: they
+    # were IDENTICAL, meaning "preconditioning" had silently been a no-op the
+    # entire time despite hessian_ok being True and precond_note reading
+    # "computed". Re-accumulate covariance here, post-wrap, so the keys the
+    # later lookup needs actually exist.
+    precondition_hessian_ok = True
+    try:
+        run_.setup({"forward": ["covariance"], "backward": ["covariance"]})
+        for s in range(0, n_train, args.batch):
+            xb, yb = Xtr_t[s:s + args.batch], ytr_t[s:s + args.batch]
+            with run_(data_id=data_ids(len(xb))):
+                logix_model.zero_grad(set_to_none=True)
+                F.cross_entropy(logits(logix_model, xb), yb, reduction="sum").backward()
+        run_.finalize()
+    except Exception as e:
+        print(f"[exp35] WARNING: post-add_lora covariance pass failed ({e!r}); "
+              f"preconditioned scores will fall back to unconditioned dot.")
+        precondition_hessian_ok = False
+
     # --- Logging pass over the TRAIN set: persist raw per-example grad to disk ---
     # save(True) is required -- build_log_dataloader() reads the log dataset
     # back from disk (LogDataset(log_dir=...)), so without it the loader is
@@ -352,18 +382,34 @@ def run(args):
     print("[exp35] scoring LogIX dot (precondition=False) ...")
     logix_dot = influence_matrix(precondition=False, hessian="raw")
 
-    if hessian_ok:
+    if precondition_hessian_ok:
         print("[exp35] scoring LogIX preconditioned (precondition=True, hessian=kfac) ...")
         try:
             logix_precond = influence_matrix(precondition=True, hessian="kfac")
-            precond_note = "computed"
+            # LogIX's own precondition() can fail SILENTLY -- it catches its own
+            # key-mismatch case internally, logs a WARNING (not an exception),
+            # and returns the src_log UNCHANGED, so compute_influence_all runs
+            # to completion and returns scores identical to precondition=False.
+            # Our own try/except only catches actual exceptions, so it reported
+            # "computed" for exactly this silent-fallback case before this check
+            # was added -- confirmed by finding logix_dot and logix_precond
+            # byte-identical in a real run despite precond_note saying
+            # "computed". Detect it directly instead of trusting the absence
+            # of an exception.
+            if np.array_equal(logix_precond, logix_dot):
+                precond_note = ("fallback_to_dot: LogIX's own precondition() silently "
+                                 "returned unconditioned scores (covariance key mismatch or "
+                                 "similar internal bail-out) -- scores are byte-identical to "
+                                 "precondition=False, not a coincidence")
+            else:
+                precond_note = "computed"
         except Exception as e:
             print(f"[exp35] WARNING: preconditioned scoring failed ({e!r}); using dot as fallback.")
             logix_precond = logix_dot
             precond_note = f"fallback_to_dot: {e!r}"
     else:
         logix_precond = logix_dot
-        precond_note = "fallback_to_dot: hessian accumulation pass failed"
+        precond_note = "fallback_to_dot: post-add_lora covariance accumulation pass failed"
 
     # ---- Traceprop's own gradients at the storage-matched proj_dim, for a
     # genuine apples-to-apples comparison against LogIX's natural footprint
@@ -404,7 +450,7 @@ def run(args):
         H = gtr.T @ gtr + lam * np.eye(d, dtype=np.float32)
         return gte @ np.linalg.solve(H, gtr.T)
 
-    results, per_example_r = {}, {}
+    results, per_example_r, score_matrices = {}, {}, {}
     for name, mat in (
         ("traceprop_dot", dot_scores(G_train, G_test)),
         ("traceprop_trak", trak_scores(G_train, G_test)),
@@ -416,6 +462,7 @@ def run(args):
         mean, std, rs_arr = lds_for(mat)
         results[name] = (mean, std)
         per_example_r[name] = rs_arr
+        score_matrices[name] = mat
     rng2 = np.random.default_rng(0)
     mean, std, rs_arr = lds_for(rng2.standard_normal((n_test, n_train)).astype(np.float32))
     results["random"] = (mean, std)
@@ -467,8 +514,11 @@ def run(args):
         json.dump(out, f, indent=2)
     print(f"\nsaved -> {fn}")
     np.savez(npz_fn, masks=masks, margins=margins,
-             **{f"r_{k}": v for k, v in per_example_r.items()})
-    print(f"saved -> {npz_fn} (per-example scores for paired bootstrap)")
+             **{f"r_{k}": v for k, v in per_example_r.items()},
+             **{f"attr_{k}": v for k, v in score_matrices.items()})
+    print(f"saved -> {npz_fn} (per-example scores + raw (n_test, n_train) attribution "
+          f"matrices -- enables a two-way bootstrap over both test examples AND subsets, "
+          f"not just the already-reduced per-example Spearman r)")
     return out
 
 
