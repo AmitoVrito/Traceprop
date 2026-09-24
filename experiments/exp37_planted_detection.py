@@ -374,16 +374,35 @@ def run_one_seed(args, seed, device, torch, F, GradientStore, LoRAGradientLogger
     repr_scores = (cosine_normalize(repr_test) @ cosine_normalize(repr_train).T).mean(axis=0)
     score_variants["repr_similarity"] = repr_scores
 
+    # --- label-aware baselines: fair competitors once the metric depends on labels ---
+    # A per-example output-layer gradient is ~(prediction - onehot(label)) (x) features,
+    # so its SIGN follows the training label, independent of whether any backdoor was
+    # ever learned: poisoned examples (forced to the target label) systematically point
+    # toward increasing P(target), distractors (kept at their true non-target label)
+    # systematically point the other way. That alone perfectly separates poison from
+    # distractor -- confirmed empirically: auc_poison_vs_distractor hit 1.0 in an hf
+    # smoke test where backdoor_success_rate was 0, i.e. before the model had learned
+    # anything about the trigger. These label-aware baselines make that artifact
+    # visible instead of letting a gradient method look like it's "beating" a baseline
+    # that doesn't get to see labels.
+    label_agree = np.where(ytr_poisoned == args.backdoor_target_label, 1.0, -1.0).astype(np.float32)
+    score_variants["label_match"] = (ytr_poisoned == args.backdoor_target_label).astype(np.float32)
+    score_variants["label_aware_repr"] = repr_scores * label_agree
+
     backdoor_results = {}
     not_mislabeled = ~is_mislabel
-    # trigger-bearing-only mask: poisoned vs distractor, everything else excluded.
-    # Token/representation matching scores exactly 0.5 here by construction (both
-    # groups contain the trigger); a real attribution method should score well
-    # above 0.5 by giving distractors (argue AGAINST the backdoor) LOWER --
-    # possibly negative -- scores than poisoned examples (argue FOR it). This is
-    # the single number that isolates what attribution specifically contributes,
-    # separate from "can you find the trigger at all."
+    # sign-sanity check ONLY, not attribution evidence -- see label_agree note above.
+    # A method with the label-sign artifact (which includes plain gradient dot products)
+    # scores well here for reasons unrelated to whether the backdoor was learned; report
+    # auc_within_target below as the metric that actually isolates attribution.
     trigger_bearing = is_backdoor | is_distractor
+    # --- PRIMARY metric: within the target-labeled subset only (poisoned examples vs.
+    # examples that were ALREADY, naturally, target-labeled -- excludes distractors,
+    # which are non-target by construction and so already excluded by this mask). Every
+    # row here shares the same label, so label_match is EXACTLY 0.5 by construction and
+    # cannot contribute to separation -- any AUC above 0.5 has to come from the trigger
+    # itself, which is what actually isolates attribution from the label-sign artifact.
+    target_mask = ytr_poisoned == args.backdoor_target_label
     for name, scores in score_variants.items():
         auc_all = float(roc_auc_score(is_backdoor, scores))
         p_at_k_all = precision_at_k(scores, is_backdoor, k_backdoor)
@@ -391,10 +410,12 @@ def run_one_seed(args, seed, device, torch, F, GradientStore, LoRAGradientLogger
         p_at_k_excl = precision_at_k(scores[not_mislabeled], is_backdoor[not_mislabeled], k_backdoor)
         auc_poison_vs_distractor = float(roc_auc_score(
             is_backdoor[trigger_bearing], scores[trigger_bearing]))
+        auc_within_target = float(roc_auc_score(is_backdoor[target_mask], scores[target_mask]))
         backdoor_results[name] = {
             "auc": round(auc_all, 4), "precision_at_k": round(p_at_k_all, 4),
             "auc_excl_mislabel": round(auc_excl, 4), "precision_at_k_excl_mislabel": round(p_at_k_excl, 4),
-            "auc_poison_vs_distractor": round(auc_poison_vs_distractor, 4),
+            "auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY": round(auc_poison_vs_distractor, 4),
+            "auc_within_target": round(auc_within_target, 4),
         }
     backdoor_auc_random = float(roc_auc_score(is_backdoor, rng3.standard_normal(n_train)))
 
@@ -436,12 +457,23 @@ def run_one_seed(args, seed, device, torch, F, GradientStore, LoRAGradientLogger
         "precision_at_k": round(precision_at_k(random_scores, is_mislabel, len(mislabel_idx)), 4),
     }
 
+    backdoor_gap = backdoor_success_rate - clean_target_rate
+    backdoor_learned = backdoor_gap >= args.min_backdoor_gap
+    if not backdoor_learned:
+        print(f"[exp37] WARNING seed {seed}: backdoor gap {backdoor_gap:+.4f} < "
+              f"{args.min_backdoor_gap} -- this seed's backdoor AUCs are flagged invalid "
+              f"(the model likely never learned the trigger, so the AUCs above measure "
+              f"something else, e.g. the label-sign artifact auc_within_target is designed "
+              f"to avoid).")
+
     return {
         "n_train": n_train, "k_backdoor": k_backdoor, "k_distractor": len(distractor_idx),
         "k_mislabel": len(mislabel_idx),
         "overhead_pct": overhead_pct,
         "backdoor_success_rate": backdoor_success_rate,
         "clean_target_rate": clean_target_rate,
+        "backdoor_gap": backdoor_gap,
+        "backdoor_learned": backdoor_learned,
         "backdoor_random_auc": backdoor_auc_random,
         "trigger_overflow_rows": train_overflow,
         "trigger_overflow_total_rows": train_trigger_rows,
@@ -472,22 +504,38 @@ def run(args):
         print(f"[exp37] === seed {seed} ({seed - args.seed + 1}/{args.n_seeds}) ===")
         r = run_one_seed(args, seed, device, torch, F, GradientStore, LoRAGradientLogger, select_lora_linears)
         print(f"  backdoor_success={r['backdoor_success_rate']:.4f} "
-              f"clean_control={r['clean_target_rate']:.4f} overhead={r['overhead_pct']:.2f}%")
+              f"clean_control={r['clean_target_rate']:.4f} gap={r['backdoor_gap']:+.4f} "
+              f"learned={r['backdoor_learned']} overhead={r['overhead_pct']:.2f}%")
         for name, v in r["backdoor"].items():
-            print(f"  backdoor-{name}: AUC={v['auc']:.4f} (excl_mislabel={v['auc_excl_mislabel']:.4f}, "
-                  f"poison_vs_distractor={v['auc_poison_vs_distractor']:.4f})")
+            print(f"  backdoor-{name}: auc_within_target={v['auc_within_target']:.4f} "
+                  f"(auc_all={v['auc']:.4f}, sign_sanity_check={v['auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY']:.4f})")
         per_seed.append(r)
 
     def agg_scalar(name):
         vals = [r[name] for r in per_seed]
         return {"mean": round(float(np.mean(vals)), 4), "std": round(float(np.std(vals)), 4)}
 
+    valid_seeds = [r for r in per_seed if r["backdoor_learned"]]
+    n_valid = len(valid_seeds)
+    if n_valid == 0:
+        print(f"[exp37] WARNING: NO seed reached the backdoor gap threshold "
+              f"({args.min_backdoor_gap}) -- falling back to ALL seeds for the aggregate, "
+              f"but treat the backdoor AUCs below as unreliable. Raise --plant_frac or "
+              f"--epochs and rerun.")
+        backdoor_seeds_for_agg = per_seed
+    else:
+        if n_valid < len(per_seed):
+            print(f"[exp37] {len(per_seed) - n_valid}/{len(per_seed)} seed(s) failed the "
+                  f"backdoor gap threshold and are EXCLUDED from the aggregated backdoor AUCs "
+                  f"below (still included in overhead/mislabel aggregates).")
+        backdoor_seeds_for_agg = valid_seeds
+
     backdoor_agg = {}
     for name in per_seed[0]["backdoor"]:
         backdoor_agg[name] = {}
         for metric in ("auc", "precision_at_k", "auc_excl_mislabel", "precision_at_k_excl_mislabel",
-                       "auc_poison_vs_distractor"):
-            vals = [r["backdoor"][name][metric] for r in per_seed]
+                       "auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY", "auc_within_target"):
+            vals = [r["backdoor"][name][metric] for r in backdoor_seeds_for_agg]
             backdoor_agg[name][metric] = {"mean": round(float(np.mean(vals)), 4), "std": round(float(np.std(vals)), 4)}
 
     mislabel_agg = {}
@@ -518,21 +566,33 @@ def run(args):
         "backdoor_random_auc": agg_scalar("backdoor_random_auc"),
         "trigger_overflow_rows_total": sum(r["trigger_overflow_rows"] for r in per_seed),
         "trigger_overflow_denominator_total": sum(r["trigger_overflow_total_rows"] for r in per_seed),
+        "n_valid_seeds": n_valid,
+        "n_seeds_total": len(per_seed),
+        "per_seed_backdoor_learned": [r["backdoor_learned"] for r in per_seed],
         "primary_backdoor": backdoor_agg,
         "secondary_mislabel": mislabel_agg,
         "note": "backdoor and distractor examples are both sampled ONLY from the non-target "
                 "class, so every 'poisoned' example is a real label flip and every "
-                "distractor keeps its TRUE (non-target) label while carrying the trigger -- "
-                "distractors argue AGAINST the backdoor and should get LOW/negative "
-                "attribution scores, not just fail to stand out. backdoor AUC reported as "
-                "dot/cosine/trak, each with and without the mislabeled set in the candidate "
-                "pool (mislabeled examples have large gradients that could otherwise "
-                "dominate a raw dot-product ranking), AND as auc_poison_vs_distractor -- "
-                "ranking ONLY the trigger-bearing examples (poisoned vs. distractor), where "
-                "token/representation matching scores exactly 0.5 by construction (both "
-                "groups contain the trigger) and only a real attribution signal can do "
-                "better. repr_similarity is reported as exactly that matching baseline for "
-                "direct comparison across all four AUC variants.",
+                "distractor keeps its TRUE (non-target) label while carrying the trigger. "
+                "auc_within_target is the PRIMARY attribution metric: computed only over "
+                "training examples labeled with the target class (poisoned vs. examples "
+                "that were already, naturally, target-labeled), where every row shares the "
+                "same label so label_match is exactly 0.5 by construction and cannot "
+                "contribute to separation -- any AUC above 0.5 has to come from the trigger "
+                "itself. auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY is NOT attribution "
+                "evidence: a per-example output-layer gradient's sign follows the training "
+                "label (poison=target label, distractor=non-target label), so this AUC hits "
+                "1.0 from the label-sign artifact alone, confirmed empirically in a smoke "
+                "test where it hit 1.0 with backdoor_success_rate=0 (before the model had "
+                "learned anything about the trigger) -- use it only to confirm scores have "
+                "the expected sign, never to claim attribution works. label_match and "
+                "label_aware_repr are label-aware baselines reported for every AUC as fair "
+                "competitors once the metric depends on labels; label_aware_repr matching "
+                "or beating gradient methods on auc_within_target is a real possible "
+                "outcome (representations of triggered inputs are often dominated by the "
+                "trigger once it's learned) and should be reported honestly, not hidden. "
+                "backdoor AUCs for a seed with backdoor_gap < min_backdoor_gap are excluded "
+                "from these aggregates (see per_seed_backdoor_learned and n_valid_seeds).",
     }
     print(json.dumps(out, indent=2))
 
@@ -578,6 +638,11 @@ def main():
                     help="max tokens overwritten at the true end of real content (hf backend: "
                          "encoded length of the fixed trigger phrase, capped to this)")
     ap.add_argument("--backdoor_target_label", type=int, default=1)
+    ap.add_argument("--min_backdoor_gap", type=float, default=0.3,
+                    help="minimum (triggered - clean) target-label rate for a seed's "
+                         "backdoor AUCs to be trusted -- flagged invalid in the output "
+                         "otherwise and excluded from the aggregated mean/std (all-seeds "
+                         "fallback with a warning if every seed fails this check)")
     ap.add_argument("--epochs", type=int, default=3)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--batch", type=int, default=16)
