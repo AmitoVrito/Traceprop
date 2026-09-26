@@ -1,0 +1,87 @@
+{
+  "tool": "logix (logix-project/logix)",
+  "backend": "hf",
+  "model": "EleutherAI/pythia-1b",
+  "device": "cuda",
+  "tracked_modules_count": 24,
+  "track_last_n_blocks": 6,
+  "steps": 100,
+  "repeats": 10,
+  "warmup": 10,
+  "storage_matching": {
+    "logix_bytes_per_example_measured": 6144.0,
+    "traceprop_proj_dim_to_match": 1536,
+    "note": "LogIX at its own natural settings (no rank override); logix_bytes_per_example_measured is the REAL on-disk serialized size (log_*.mmap files / n_examples), not an analytical rank^2*4*n_layers estimate -- the earlier analytical version was wrong because it used the REQUESTED rank, not LoraLinear's actual min(requested_rank, in_features, out_features)-clamped rank. Rerun exp25/exp26/exp29 with --proj_dim traceprop_proj_dim_to_match for the storage-matched Traceprop-side comparison."
+  },
+  "gradient_validation": [
+    {
+      "init_strategy": "random",
+      "save_to_disk": false,
+      "n_checks": 48,
+      "worst_cosine": 0.9999997873867499,
+      "scale_ratio_mean": 2.0000000034304306,
+      "scale_ratio_min": 1.999999800180996,
+      "scale_ratio_max": 2.0000001727390786,
+      "scale_nonuniformity": 1.00000018627906
+    },
+    {
+      "init_strategy": "pca",
+      "save_to_disk": false,
+      "n_checks": 96,
+      "worst_cosine": 0.9999997617876535,
+      "scale_ratio_mean": 1.999999986144793,
+      "scale_ratio_min": 1.999999585242557,
+      "scale_ratio_max": 2.000000304077273,
+      "scale_nonuniformity": 1.0000003594174327
+    }
+  ],
+  "configs": {
+    "default_random_init": {
+      "save_to_disk": false,
+      "init_strategy": "random",
+      "base_step_ms": 227.6029,
+      "overhead_pct_median": -23.544,
+      "overhead_pct_std": 0.446,
+      "overhead_samples": [
+        -22.837,
+        -24.525,
+        -22.89,
+        -23.717,
+        -23.476,
+        -23.304,
+        -23.638,
+        -23.502,
+        -23.614,
+        -23.586
+      ],
+      "covariance_pass_s": 0.0,
+      "covariance_pass_pct_of_measured_baseline": 0.0,
+      "peak_mem_mb_baseline": 8670.17,
+      "peak_mem_mb_logix": 8251.72
+    },
+    "recommended_pca_init": {
+      "save_to_disk": false,
+      "init_strategy": "pca",
+      "base_step_ms": 228.9838,
+      "overhead_pct_median": -23.71,
+      "overhead_pct_std": 0.335,
+      "overhead_samples": [
+        -24.748,
+        -23.525,
+        -23.628,
+        -23.767,
+        -23.573,
+        -23.668,
+        -23.638,
+        -23.752,
+        -23.778,
+        -23.937
+      ],
+      "covariance_pass_s": 6.9489,
+      "covariance_pass_pct_of_measured_baseline": 3.03,
+      "peak_mem_mb_baseline": 8670.29,
+      "peak_mem_mb_logix": 8251.84
+    }
+  },
+  "note": "directly comparable to exp25/exp30's LoRAGradientLogger overhead numbers (same model, scope, batch/seq, interleaved-block timing methodology). default_random_init requests no covariance (LogIX's literal default); recommended_pca_init requests forward/backward covariance for PCA init (its authors' recommended LoRA setting) and times that pass separately in covariance_pass_s -- see logix_preconditioned in exp35 for the corresponding LDS-side comparison."
+}
