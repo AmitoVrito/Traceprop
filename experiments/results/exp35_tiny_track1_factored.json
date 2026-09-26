@@ -1,0 +1,100 @@
+{
+  "backend": "tiny",
+  "model": "tiny-clf",
+  "device": "cpu",
+  "lora_init": "pca",
+  "lora_init_effective": "pca",
+  "n_train": 400,
+  "n_test": 100,
+  "n_subsets": 200,
+  "subset_frac": 0.5,
+  "epochs": 3,
+  "proj_dim": 512,
+  "track_last_n_blocks": 1,
+  "target_test_acc": 0.71,
+  "storage_matching": {
+    "logix_bytes_per_example_measured": 3088.0,
+    "traceprop_proj_dim_default": 512,
+    "traceprop_proj_dim_matched": 772,
+    "traceprop_factored_kfac_bracket": {
+      "7": {
+        "bytes_achieved": 2548,
+        "rel_error_vs_logix": -0.1749,
+        "direction": "less_storage_than_logix"
+      },
+      "8": {
+        "bytes_achieved": 3328,
+        "rel_error_vs_logix": 0.0777,
+        "direction": "more_storage_than_logix"
+      }
+    },
+    "note": "LogIX runs at its own natural settings (no rank override); logix_bytes_per_example_measured is the REAL on-disk serialized size from the actual train logging pass, not an analytical estimate. traceprop_dot/traceprop_trak use proj_dim (the default reference, 512 floats/2KB elsewhere in the paper); traceprop_dot_matched/traceprop_trak_matched use traceprop_proj_dim_matched, grown or shrunk to LogIX's own measured footprint for a genuine storage-matched comparison. traceprop_factored_* (if --factored was passed) brackets BOTH achievable integer kfac values around LogIX's measured footprint -- an exact byte match only happens when bytes/4/n_tracked_layers is a perfect square, which is not guaranteed on this backend; see traceprop_factored_kfac_bracket for the signed relative error of each. Neither direction is inherently 'conservative' for Traceprop -- less storage is the stronger claim if quality still holds, more storage is the weaker one."
+  },
+  "logix_preconditioned_note": "computed",
+  "gradient_validation": {
+    "n_checks": 52,
+    "worst_cosine": 0.9999997938647319,
+    "scale_ratio_mean": 1.9999999935687487,
+    "scale_ratio_min": 1.9999997272735517,
+    "scale_ratio_max": 2.0000003058980274,
+    "scale_nonuniformity": 1.0000002893122772
+  },
+  "factored_gradient_validation": {
+    "7": {
+      "n_checks": 4,
+      "worst_cosine": 1.0,
+      "mean_cosine": 1.0
+    },
+    "8": {
+      "n_checks": 4,
+      "worst_cosine": 0.9999998861518659,
+      "mean_cosine": 0.9999999088929088
+    }
+  },
+  "lds": {
+    "traceprop_dot": {
+      "mean": 0.667,
+      "std": 0.0678
+    },
+    "traceprop_trak": {
+      "mean": 0.3762,
+      "std": 0.0869
+    },
+    "traceprop_dot_matched": {
+      "mean": 0.6706,
+      "std": 0.0676
+    },
+    "traceprop_trak_matched": {
+      "mean": 0.3556,
+      "std": 0.0816
+    },
+    "logix_dot": {
+      "mean": 0.6474,
+      "std": 0.0696
+    },
+    "logix_preconditioned": {
+      "mean": 0.6511,
+      "std": 0.071
+    },
+    "traceprop_factored_kfac7_dot": {
+      "mean": 0.6715,
+      "std": 0.0632
+    },
+    "traceprop_factored_kfac7_trak": {
+      "mean": 0.368,
+      "std": 0.0942
+    },
+    "traceprop_factored_kfac8_dot": {
+      "mean": 0.675,
+      "std": 0.0643
+    },
+    "traceprop_factored_kfac8_trak": {
+      "mean": 0.3503,
+      "std": 0.0943
+    },
+    "random": {
+      "mean": 0.0169,
+      "std": 0.0853
+    }
+  }
+}
