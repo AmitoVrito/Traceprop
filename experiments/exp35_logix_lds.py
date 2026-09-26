@@ -494,36 +494,50 @@ def run(args):
     # claim), ceil(ideal) uses MORE (favors Traceprop, weaker claim if quality
     # only holds there). Each gets both dot and TRAK scoring, matching the
     # dense path's parity.
-    factored_variants = {}  # kfac -> {"G_train":..., "G_test":..., "bytes":..., "rel_error":...}
+    factored_variants = {}  # label -> {"G_train":..., "G_test":..., "bytes":..., "rel_error":...}
     factored_gradient_validation = {}
     if getattr(args, "factored", False):
-        ideal_kfac = (logix_bytes_per_example / 4 / n_tracked_layers) ** 0.5
-        kfac_candidates = sorted({max(1, int(np.floor(ideal_kfac))),
-                                   max(1, int(np.ceil(ideal_kfac)))})
-        for kfac in kfac_candidates:
-            bytes_achieved = n_tracked_layers * kfac ** 2 * 4
-            rel_error = (bytes_achieved - logix_bytes_per_example) / logix_bytes_per_example
-            direction = "LESS" if rel_error < 0 else "MORE"
-            print(f"[exp35] factored path: kfac={kfac} -> {bytes_achieved}B/example vs LogIX's "
-                  f"{logix_bytes_per_example:.1f}B/example measured over {n_tracked_layers} "
-                  f"tracked layers ({rel_error:+.1%}, {direction} storage than LogIX).")
+        # bytes_per_element=4 (fp32, the actual stored dtype -- what's really
+        # on disk today) and, if --fp16, ALSO 2 (fp16 storage would allow a
+        # larger kfac in the same byte budget; the resulting sketch is
+        # round-tripped through np.float16 below to simulate the real
+        # precision loss, not just given a bigger kfac for free).
+        bpe_variants = [(4, "")] + ([(2, "_fp16")] if getattr(args, "fp16", False) else [])
+        for bytes_per_element, suffix in bpe_variants:
+            ideal_kfac = (logix_bytes_per_example / bytes_per_element / n_tracked_layers) ** 0.5
+            kfac_candidates = sorted({max(1, int(np.floor(ideal_kfac))),
+                                       max(1, int(np.ceil(ideal_kfac)))})
+            for kfac in kfac_candidates:
+                label = f"{kfac}{suffix}"
+                bytes_achieved = n_tracked_layers * kfac ** 2 * bytes_per_element
+                rel_error = (bytes_achieved - logix_bytes_per_example) / logix_bytes_per_example
+                direction = "LESS" if rel_error < 0 else "MORE"
+                dtype_note = "fp16" if suffix else "fp32"
+                print(f"[exp35] factored path ({dtype_note}): kfac={kfac} -> "
+                      f"{bytes_achieved}B/example vs LogIX's {logix_bytes_per_example:.1f}"
+                      f"B/example measured over {n_tracked_layers} tracked layers "
+                      f"({rel_error:+.1%}, {direction} storage than LogIX).")
 
-            print(f"[exp35] validating factored sketch kfac={kfac} (cosine vs. independent "
-                  f"autograd) ...")
-            fgv = validate_factored_gradients(
-                target_model, scope_patterns, last_n, kfac, Xtr_t, ytr_t)
-            factored_gradient_validation[kfac] = fgv
-            print(f"[exp35] factored gradient validation kfac={kfac}: worst_cosine="
-                  f"{fgv['worst_cosine']:.6f} over {fgv['n_checks']} checks")
+                print(f"[exp35] validating factored sketch kfac={kfac} ({dtype_note}) (cosine "
+                      f"vs. independent autograd) ...")
+                fgv = validate_factored_gradients(
+                    target_model, scope_patterns, last_n, kfac, Xtr_t, ytr_t)
+                factored_gradient_validation[label] = fgv
+                print(f"[exp35] factored gradient validation kfac={kfac} ({dtype_note}): "
+                      f"worst_cosine={fgv['worst_cosine']:.6f} over {fgv['n_checks']} checks")
 
-            G_train_f = collect_grads_posthoc(
-                target_model, Xtr_t, ytr_t, scope_patterns, last_n, factored=True, kfac=kfac)
-            G_test_f = collect_grads_posthoc(
-                target_model, Xte_t, yte_t, scope_patterns, last_n, factored=True, kfac=kfac)
-            factored_variants[kfac] = {
-                "G_train": G_train_f, "G_test": G_test_f,
-                "bytes_achieved": bytes_achieved, "rel_error": rel_error,
-            }
+                G_train_f = collect_grads_posthoc(
+                    target_model, Xtr_t, ytr_t, scope_patterns, last_n, factored=True, kfac=kfac)
+                G_test_f = collect_grads_posthoc(
+                    target_model, Xte_t, yte_t, scope_patterns, last_n, factored=True, kfac=kfac)
+                if suffix:  # simulate fp16 storage precision loss, not just a free bigger kfac
+                    G_train_f = G_train_f.astype(np.float16).astype(np.float32)
+                    G_test_f = G_test_f.astype(np.float16).astype(np.float32)
+                factored_variants[label] = {
+                    "G_train": G_train_f, "G_test": G_test_f,
+                    "bytes_achieved": bytes_achieved, "rel_error": rel_error,
+                    "dtype": dtype_note, "kfac": kfac,
+                }
 
     # ---- ground-truth LDS margins from subset retraining ----
     print(f"[exp35] retraining {args.n_subsets} subsets (frac={args.subset_frac}) ...")
@@ -564,10 +578,10 @@ def run(args):
         ("logix_dot", logix_dot),
         ("logix_preconditioned", logix_precond),
     ]
-    for kfac, v in factored_variants.items():
-        score_list.append((f"traceprop_factored_kfac{kfac}_dot",
+    for label, v in factored_variants.items():
+        score_list.append((f"traceprop_factored_kfac{label}_dot",
                             dot_scores(v["G_train"], v["G_test"])))
-        score_list.append((f"traceprop_factored_kfac{kfac}_trak",
+        score_list.append((f"traceprop_factored_kfac{label}_trak",
                             trak_scores(v["G_train"], v["G_test"])))
 
     results, per_example_r, score_matrices = {}, {}, {}
@@ -596,13 +610,15 @@ def run(args):
             "traceprop_proj_dim_default": args.proj_dim,
             "traceprop_proj_dim_matched": traceprop_proj_dim_to_match,
             "traceprop_factored_kfac_bracket": {
-                str(kfac): {
+                label: {
+                    "kfac": v["kfac"],
+                    "dtype": v["dtype"],
                     "bytes_achieved": v["bytes_achieved"],
                     "rel_error_vs_logix": round(v["rel_error"], 4),
                     "direction": "less_storage_than_logix" if v["rel_error"] < 0
                                  else "more_storage_than_logix",
                 }
-                for kfac, v in factored_variants.items()
+                for label, v in factored_variants.items()
             },
             "note": "LogIX runs at its own natural settings (no rank override); "
                     "logix_bytes_per_example_measured is the REAL on-disk serialized size "
@@ -686,9 +702,14 @@ def main():
                     help="skip the one-time cosine-vs-autograd check of LogIX's logged "
                          "gradients (cheap, catches wiring bugs -- see logix_strict.py)")
     ap.add_argument("--factored", action="store_true",
-                    help="also score Traceprop's Kronecker-factored sketch (kfac solved "
-                         "automatically to match LogIX's measured bytes/example exactly), "
-                         "validated via cosine-vs-independent-autograd before scoring")
+                    help="also score Traceprop's Kronecker-factored sketch, bracketed at the "
+                         "two achievable integer kfac values around LogIX's measured "
+                         "bytes/example, validated via cosine-vs-independent-autograd")
+    ap.add_argument("--fp16", action="store_true",
+                    help="with --factored, ALSO run a fp16-storage bracket (2 bytes/element "
+                         "instead of 4, allowing a larger kfac at the same byte budget); the "
+                         "sketch is round-tripped through np.float16 to simulate real storage "
+                         "precision loss, not just given a bigger kfac for free")
     args = ap.parse_args()
     run(args)
 
