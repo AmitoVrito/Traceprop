@@ -137,11 +137,13 @@ def run(args):
                 opt.step()
         return model
 
-    def collect_grads_posthoc(model, X, y, patterns, last_n, proj_dim=None):
+    def collect_grads_posthoc(model, X, y, patterns, last_n, proj_dim=None,
+                               factored=False, kfac=None):
         proj_dim = proj_dim if proj_dim is not None else args.proj_dim
         store = GradientStore(proj_dim=proj_dim, seed=42)
         targets = select_lora_linears(model, patterns, last_n_blocks=last_n)
-        lg = LoRAGradientLogger(store, targets, proj_dim=proj_dim)
+        lg = LoRAGradientLogger(store, targets, proj_dim=proj_dim,
+                                 factored=factored, kfac=kfac or 16)
         n = len(X)
         for s in range(0, n, args.batch):
             xb, yb = X[s:s + args.batch], y[s:s + args.batch]
@@ -151,6 +153,66 @@ def run(args):
             lg.flush_step(sample_indices=range(s, s + len(xb)))
         lg.detach()
         return store.get_projected_matrix()
+
+    def validate_factored_gradients(model, patterns, last_n, kfac, X, y, n_checks=4, seed=42):
+        """Cosine-vs-autograd check for the factored (Kronecker) sketch, the
+        same rigor standard the dense path is held to elsewhere in this
+        script (validate_logix_gradients / gradient_validation above), which
+        the factored path has never had until now.
+
+        For a single example, _factored_sketch()'s hook-based computation is
+        Sum_t (P g_t) ⊗ (Q a_t) using the activation/output-grad the SAME
+        hooks capture for the dense path (already implicitly trusted).
+        Sum_t (P g_t) ⊗ (Q a_t) = P (Sum_t g_t ⊗ a_t) Q^T algebraically, so an
+        INDEPENDENT ground truth built from torch.autograd.grad (a fresh
+        forward/backward, not reusing the hook-captured tensors at all) run
+        through that same P, G_true, Q^T formula must match the logger's own
+        sketch to numerical precision if -- and only if -- both the hook
+        capture and the sketch algebra are correct. This does not test
+        whether the sketch is a good LOW-DIMENSIONAL approximation (that's
+        what LDS separately measures) -- only that the sketch the logger
+        produces is the sketch the math says it should produce."""
+        import torch
+        model = model.eval()
+        store = GradientStore(proj_dim=64, seed=seed)
+        targets = select_lora_linears(model, patterns, last_n_blocks=last_n)
+        lg = LoRAGradientLogger(store, targets, proj_dim=64, factored=True,
+                                 kfac=kfac, seed=seed)
+        cosines = []
+        n_checks = min(n_checks, len(X))
+        for i in range(n_checks):
+            xb, yb = X[i:i + 1], y[i:i + 1]
+
+            model.zero_grad(set_to_none=True)
+            lo = logits(model, xb)
+            F.cross_entropy(lo, yb, reduction="sum").backward()
+            sketch_hook = lg._factored_sketch()  # populates lg._fac_PQ on first call
+            if sketch_hook is None:
+                continue
+            sketch_hook = sketch_hook[0].detach().cpu().numpy()
+
+            manual_parts = []
+            for name, module in targets:
+                model.zero_grad(set_to_none=True)
+                lo2 = logits(model, xb)
+                loss2 = F.cross_entropy(lo2, yb, reduction="sum")
+                (g_true,) = torch.autograd.grad(loss2, module.weight, retain_graph=False)
+                P, Q = lg._fac_PQ[name]
+                manual = (P.to(g_true.dtype) @ g_true.float() @ Q.to(g_true.dtype).T)
+                manual_parts.append(manual.reshape(-1).detach().cpu().numpy())
+            sketch_manual = np.concatenate(manual_parts)
+
+            num = float(np.dot(sketch_hook, sketch_manual))
+            den = float(np.linalg.norm(sketch_hook) * np.linalg.norm(sketch_manual))
+            cosines.append(num / den if den > 0 else float("nan"))
+        lg.detach()
+        model.train()
+        cosines = np.array(cosines, dtype=np.float64)
+        return {
+            "n_checks": int(len(cosines)),
+            "worst_cosine": float(np.nanmin(cosines)) if len(cosines) else None,
+            "mean_cosine": float(np.nanmean(cosines)) if len(cosines) else None,
+        }
 
     print(f"[exp35] training target model ({n_train} examples) ...")
     target_model = train_final(np.arange(n_train), args.epochs, args.lr)
@@ -419,6 +481,50 @@ def run(args):
     G_test_matched = collect_grads_posthoc(
         target_model, Xte_t, yte_t, scope_patterns, last_n, proj_dim=traceprop_proj_dim_to_match)
 
+    # ---- Traceprop's FACTORED (Kronecker) sketch, storage-BRACKETED via kfac
+    # instead of proj_dim -- exp25/exp31 already confirmed this path beats
+    # LogIX on SPEED at every tracked scope, but no LDS number for it has
+    # ever been measured; the dense path above is the only one validated for
+    # attribution quality so far. kfac must be an integer, so an exact byte
+    # match only happens when logix_bytes/4/n_tracked_layers is a perfect
+    # square (true for pythia-1b's uniform-rank scopes, NOT guaranteed here).
+    # Rather than pick one side, run BOTH bracketing candidates: floor(ideal)
+    # uses LESS storage than LogIX (the conservative direction -- Traceprop
+    # under a smaller budget still matching LogIX would be the stronger
+    # claim), ceil(ideal) uses MORE (favors Traceprop, weaker claim if quality
+    # only holds there). Each gets both dot and TRAK scoring, matching the
+    # dense path's parity.
+    factored_variants = {}  # kfac -> {"G_train":..., "G_test":..., "bytes":..., "rel_error":...}
+    factored_gradient_validation = {}
+    if getattr(args, "factored", False):
+        ideal_kfac = (logix_bytes_per_example / 4 / n_tracked_layers) ** 0.5
+        kfac_candidates = sorted({max(1, int(np.floor(ideal_kfac))),
+                                   max(1, int(np.ceil(ideal_kfac)))})
+        for kfac in kfac_candidates:
+            bytes_achieved = n_tracked_layers * kfac ** 2 * 4
+            rel_error = (bytes_achieved - logix_bytes_per_example) / logix_bytes_per_example
+            direction = "LESS" if rel_error < 0 else "MORE"
+            print(f"[exp35] factored path: kfac={kfac} -> {bytes_achieved}B/example vs LogIX's "
+                  f"{logix_bytes_per_example:.1f}B/example measured over {n_tracked_layers} "
+                  f"tracked layers ({rel_error:+.1%}, {direction} storage than LogIX).")
+
+            print(f"[exp35] validating factored sketch kfac={kfac} (cosine vs. independent "
+                  f"autograd) ...")
+            fgv = validate_factored_gradients(
+                target_model, scope_patterns, last_n, kfac, Xtr_t, ytr_t)
+            factored_gradient_validation[kfac] = fgv
+            print(f"[exp35] factored gradient validation kfac={kfac}: worst_cosine="
+                  f"{fgv['worst_cosine']:.6f} over {fgv['n_checks']} checks")
+
+            G_train_f = collect_grads_posthoc(
+                target_model, Xtr_t, ytr_t, scope_patterns, last_n, factored=True, kfac=kfac)
+            G_test_f = collect_grads_posthoc(
+                target_model, Xte_t, yte_t, scope_patterns, last_n, factored=True, kfac=kfac)
+            factored_variants[kfac] = {
+                "G_train": G_train_f, "G_test": G_test_f,
+                "bytes_achieved": bytes_achieved, "rel_error": rel_error,
+            }
+
     # ---- ground-truth LDS margins from subset retraining ----
     print(f"[exp35] retraining {args.n_subsets} subsets (frac={args.subset_frac}) ...")
     rng = np.random.default_rng(args.seed)
@@ -450,15 +556,22 @@ def run(args):
         H = gtr.T @ gtr + lam * np.eye(d, dtype=np.float32)
         return gte @ np.linalg.solve(H, gtr.T)
 
-    results, per_example_r, score_matrices = {}, {}, {}
-    for name, mat in (
+    score_list = [
         ("traceprop_dot", dot_scores(G_train, G_test)),
         ("traceprop_trak", trak_scores(G_train, G_test)),
         ("traceprop_dot_matched", dot_scores(G_train_matched, G_test_matched)),
         ("traceprop_trak_matched", trak_scores(G_train_matched, G_test_matched)),
         ("logix_dot", logix_dot),
         ("logix_preconditioned", logix_precond),
-    ):
+    ]
+    for kfac, v in factored_variants.items():
+        score_list.append((f"traceprop_factored_kfac{kfac}_dot",
+                            dot_scores(v["G_train"], v["G_test"])))
+        score_list.append((f"traceprop_factored_kfac{kfac}_trak",
+                            trak_scores(v["G_train"], v["G_test"])))
+
+    results, per_example_r, score_matrices = {}, {}, {}
+    for name, mat in score_list:
         mean, std, rs_arr = lds_for(mat)
         results[name] = (mean, std)
         per_example_r[name] = rs_arr
@@ -482,6 +595,15 @@ def run(args):
             "logix_bytes_per_example_measured": round(logix_bytes_per_example, 2),
             "traceprop_proj_dim_default": args.proj_dim,
             "traceprop_proj_dim_matched": traceprop_proj_dim_to_match,
+            "traceprop_factored_kfac_bracket": {
+                str(kfac): {
+                    "bytes_achieved": v["bytes_achieved"],
+                    "rel_error_vs_logix": round(v["rel_error"], 4),
+                    "direction": "less_storage_than_logix" if v["rel_error"] < 0
+                                 else "more_storage_than_logix",
+                }
+                for kfac, v in factored_variants.items()
+            },
             "note": "LogIX runs at its own natural settings (no rank override); "
                     "logix_bytes_per_example_measured is the REAL on-disk serialized size "
                     "from the actual train logging pass, not an analytical estimate. "
@@ -489,10 +611,18 @@ def run(args):
                     "512 floats/2KB elsewhere in the paper); "
                     "traceprop_dot_matched/traceprop_trak_matched use "
                     "traceprop_proj_dim_matched, grown or shrunk to LogIX's own measured "
-                    "footprint for a genuine storage-matched comparison.",
+                    "footprint for a genuine storage-matched comparison. traceprop_factored_* "
+                    "(if --factored was passed) brackets BOTH achievable integer kfac values "
+                    "around LogIX's measured footprint -- an exact byte match only happens "
+                    "when bytes/4/n_tracked_layers is a perfect square, which is not "
+                    "guaranteed on this backend; see traceprop_factored_kfac_bracket for the "
+                    "signed relative error of each. Neither direction is inherently "
+                    "'conservative' for Traceprop -- less storage is the stronger claim if "
+                    "quality still holds, more storage is the weaker one.",
         },
         "logix_preconditioned_note": precond_note,
         "gradient_validation": gradient_validation,
+        "factored_gradient_validation": factored_gradient_validation,
         "lds": {k: {"mean": round(v[0], 4), "std": round(v[1], 4)} for k, v in results.items()},
     }
     print("\n=== LDS: Traceprop vs LogIX (own compute_influence_all API) ===")
@@ -555,6 +685,10 @@ def main():
     ap.add_argument("--skip_gradient_validation", action="store_true",
                     help="skip the one-time cosine-vs-autograd check of LogIX's logged "
                          "gradients (cheap, catches wiring bugs -- see logix_strict.py)")
+    ap.add_argument("--factored", action="store_true",
+                    help="also score Traceprop's Kronecker-factored sketch (kfac solved "
+                         "automatically to match LogIX's measured bytes/example exactly), "
+                         "validated via cosine-vs-independent-autograd before scoring")
     args = ap.parse_args()
     run(args)
 
