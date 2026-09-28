@@ -149,8 +149,12 @@ def run(args):
         params = [p for p in model.parameters() if p.requires_grad]
         opt = torch.optim.Adam(params, lr=lr)
         idx = np.asarray(idx)
+        # ONE rng created before the loop so each epoch gets a DIFFERENT (but fully
+        # deterministic, hence LDS-reproducible) batch order. Re-seeding rng(0) inside
+        # the loop reused the same order every epoch and generalised noticeably worse.
+        perm_rng = np.random.default_rng(0)
         for _ in range(epochs):
-            perm = np.random.default_rng(0).permutation(len(idx))
+            perm = perm_rng.permutation(len(idx))
             for s in range(0, len(idx), args.batch):
                 b = idx[perm[s:s + args.batch]]
                 xb, yb = Xtr_t[b], ytr_t[b]
