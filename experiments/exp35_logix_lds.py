@@ -225,6 +225,14 @@ def run(args):
 
             manual_parts = []
             for name, module in targets:
+                # Only modules that actually fired a hook are in the sketch (and in
+                # _fac_PQ). PEFT wraps modules_to_save (e.g. the classifier head) in
+                # a frozen `original_module` copy that never runs in forward and has
+                # requires_grad=False -- it is absent from the hook sketch, so skip
+                # it here too (otherwise autograd.grad raises "does not require grad"
+                # and the manual concatenation would misalign with the hook sketch).
+                if name not in lg._fac_PQ or not module.weight.requires_grad:
+                    continue
                 model.zero_grad(set_to_none=True)
                 lo2 = logits(model, xb)
                 loss2 = F.cross_entropy(lo2, yb, reduction="sum")
