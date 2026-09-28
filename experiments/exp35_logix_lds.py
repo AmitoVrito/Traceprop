@@ -116,9 +116,10 @@ def run(args):
     # subset-retrained models share this init (standard LDS practice).
     _model_seed = 1234 + args.seed
 
-    def new_model():
-        torch.manual_seed(_model_seed)
-        np.random.seed(_model_seed)
+    def new_model(seed=None):
+        s = _model_seed if seed is None else seed
+        torch.manual_seed(s)
+        np.random.seed(s)
         if args.backend == "tiny":
             m = build_tiny_classifier(vocab, seq=args.seq, r=args.rank, n_blocks=args.n_blocks)
         else:
@@ -144,15 +145,19 @@ def run(args):
     scope_patterns = ("lora_A", "lora_B") + HEAD
     last_n = None if args.track <= 0 else args.track
 
-    def train_final(idx, epochs, lr, model=None):
-        model = model if model is not None else new_model()
+    def train_final(idx, epochs, lr, model=None, train_seed=None):
+        # train_seed varies BOTH the model init and the batch order -- used only by
+        # the noise-ceiling check (retrain the SAME subset twice differently). The
+        # main LDS retraining leaves it None so every subset shares the same init
+        # (only the data differs), as LDS requires.
+        model = model if model is not None else new_model(train_seed)
         params = [p for p in model.parameters() if p.requires_grad]
         opt = torch.optim.Adam(params, lr=lr)
         idx = np.asarray(idx)
         # ONE rng created before the loop so each epoch gets a DIFFERENT (but fully
         # deterministic, hence LDS-reproducible) batch order. Re-seeding rng(0) inside
         # the loop reused the same order every epoch and generalised noticeably worse.
-        perm_rng = np.random.default_rng(0)
+        perm_rng = np.random.default_rng(0 if train_seed is None else train_seed)
         for _ in range(epochs):
             perm = perm_rng.permutation(len(idx))
             for s in range(0, len(idx), args.batch):
@@ -750,6 +755,28 @@ def run(args):
         if (m + 1) % max(1, args.n_subsets // 10) == 0:
             print(f"  subset {m + 1}/{args.n_subsets}")
 
+    # ---- noise ceiling: retrain N subsets TWICE with different seeds; the mean
+    # per-example Spearman between the two margin vectors (across those subsets)
+    # is the maximum LDS any attribution method could reach given retraining noise.
+    # A pilot LDS well below this ceiling but well above 0 is real signal. ----
+    noise_ceiling = None
+    n_nc = getattr(args, "noise_ceiling", 0)
+    if n_nc > 0:
+        print(f"[exp35] noise ceiling: {n_nc} subsets x2 retrains (different seeds) ...")
+        nc_rng = np.random.default_rng(args.seed + 4242)
+        ma = np.zeros((n_nc, n_test), dtype=np.float32)
+        mb = np.zeros((n_nc, n_test), dtype=np.float32)
+        for m in range(n_nc):
+            sub = nc_rng.choice(n_train, size=k, replace=False)
+            ma[m] = test_margins(train_final(sub, args.epochs, args.lr, train_seed=1000 + m))
+            mb[m] = test_margins(train_final(sub, args.epochs, args.lr, train_seed=5000 + m))
+        rs = [spearmanr(ma[:, i], mb[:, i]).correlation for i in range(n_test)]
+        rs = np.array(rs, dtype=np.float64); rs = rs[~np.isnan(rs)]
+        noise_ceiling = {"mean": round(float(np.mean(rs)), 4),
+                         "std": round(float(np.std(rs)), 4), "n_subsets": int(n_nc)}
+        print(f"[exp35] noise ceiling (max achievable LDS): "
+              f"{noise_ceiling['mean']:+.4f} +/- {noise_ceiling['std']:.4f}")
+
     def lds_for(attr):
         """attr: (n_test, n_train) score matrix."""
         pred = masks @ attr.T
@@ -873,6 +900,7 @@ def run(args):
         "lora_init_effective": effective_init,
         "n_train": n_train, "n_test": n_test, "n_subsets": args.n_subsets,
         "subset_frac": args.subset_frac, "epochs": args.epochs,
+        "noise_ceiling": noise_ceiling,
         "proj_dim": args.proj_dim, "track_last_n_blocks": args.track,
         "target_test_acc": round(acc, 4),
         "storage_matching": {
@@ -922,6 +950,9 @@ def run(args):
         "lds_heldout_eval": lds_heldout_eval,
     }
     print("\n=== LDS: Traceprop vs LogIX (own compute_influence_all API) ===")
+    if noise_ceiling is not None:
+        print(f"    NOISE CEILING (max achievable LDS): {noise_ceiling['mean']:+.4f} "
+              f"+/- {noise_ceiling['std']:.4f}  ({noise_ceiling['n_subsets']} subsets x2)")
     print(f"    [full n_test={n_test}]      [held-out eval n={len(precond_eval_idx)}]")
     for k, v in out["lds"].items():
         he = out["lds_heldout_eval"].get(k, {})
@@ -1026,6 +1057,10 @@ def main():
                     help="abort before the retraining loop if the target model's test "
                          "accuracy is below this (guards against running LDS on a "
                          "non-learning model at chance). 0 disables.")
+    ap.add_argument("--noise_ceiling", type=int, default=0,
+                    help="retrain this many subsets TWICE (different seeds) and report the "
+                         "mean per-example Spearman between the two margin sets -- the max LDS "
+                         "achievable given retraining noise. 0 disables.")
     args = ap.parse_args()
     run(args)
 
