@@ -1031,7 +1031,7 @@ def main():
                          "whitening at query time -- the 'no second covariance pass' path. "
                          "Adds traceprop_factored_kfac*_inlineprecond scores.")
     ap.add_argument("--precond_damping_grid",
-                    default="1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1e0,1e1",
+                    default="1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1e0,1e1",
                     help="comma-separated relative-damping candidates, used for BOTH inline-"
                          "precond AND (with --tune_logix) LogIX's preconditioning; the best on "
                          "the held-out val split is chosen and reported on the disjoint eval "

@@ -10,7 +10,7 @@ PY=../.venv310/bin/python
 SEEDS="${1:-0 1 2 3 4}"
 PREFIX="${2:-fair}"
 EXTRA="${3:-}"
-GRID="1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1e0,1e1"
+GRID="1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1e0,1e1"
 
 for s in $SEEDS; do
   echo "==================== SEED $s : exp35 ($PREFIX) ===================="
