@@ -238,7 +238,9 @@ def run(args):
                 loss2 = F.cross_entropy(lo2, yb, reduction="sum")
                 (g_true,) = torch.autograd.grad(loss2, module.weight, retain_graph=False)
                 P, Q = lg._fac_PQ[name]
-                manual = (P.to(g_true.dtype) @ g_true.float() @ Q.to(g_true.dtype).T)
+                # all in float32 -- the hook sketch upcasts too, and g_true/P/Q may
+                # differ in dtype (e.g. an fp16 HF model gives a Half g_true).
+                manual = (P.float() @ g_true.float() @ Q.float().T)
                 manual_parts.append(manual.reshape(-1).detach().cpu().numpy())
             sketch_manual = np.concatenate(manual_parts)
 

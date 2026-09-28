@@ -149,6 +149,9 @@ def build_hf_classifier(model_name, r=8, n_classes=2):
     from transformers import AutoModelForSequenceClassification
     from peft import LoraConfig, get_peft_model
     base = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=n_classes)
+    base = base.float()  # force fp32: transformers 5.x honours the config torch_dtype (often
+                         # fp16), which destabilises LoRA retraining and breaks the tiny-backend
+                         # fp32 methodology parity; attribution upcasts to fp32 anyway.
     if base.config.pad_token_id is None:
         base.config.pad_token_id = base.config.eos_token_id
     target = ["c_attn"] if "gpt2" in model_name else ["query_key_value"]
