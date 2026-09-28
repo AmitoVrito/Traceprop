@@ -87,15 +87,18 @@ def mwu_one_sided_greater(a, b):
 
 
 def logix_arm(model_name, rank, kfac, track, batches, device):
-    """Time LogIX's logging pass and its separate covariance pass on the same
-    model/batches. Returns dict of seconds (medians filled by caller loop)."""
-    import copy
+    """Time LogIX FAIRLY: its per-example gradient logging runs INLINE in a real
+    training loop (with opt.step, exactly like Traceprop and like exp31's ~3.2%),
+    NOT as a separate pass -- so we don't inflate its cost. Only the covariance
+    pass (which LogIX genuinely needs as an extra sweep for K-FAC preconditioning)
+    is counted as extra work. Returns seconds for: baseline training on the same
+    watched model, training WITH inline logging, and the separate covariance pass.
+    """
     import logix
     from logix_strict import install_strict_warnings, patch_loralinear_weight_proxy
     install_strict_warnings(); patch_loralinear_weight_proxy()
 
-    model = build(model_name, rank, device)
-    lx = copy.deepcopy(model)
+    lx = build(model_name, rank, device)   # same PEFT model / tracked LoRA linears as Traceprop
     tracked = [n for n, m in lx.named_modules()
                if isinstance(m, nn.Linear) and ("lora_A" in n or "lora_B" in n)]
     if track > 0:
@@ -109,15 +112,40 @@ def logix_arm(model_name, rank, kfac, track, batches, device):
 
     run_ = logix.LogIX(project=f"ovh_{os.getpid()}", config="exp31_config.yaml")
     run_.watch(lx, name_filter=tracked, type_filter=[nn.Linear])
+    trainable = [p for p in lx.parameters() if p.requires_grad]
 
     ids = {"n": 0}
     def dids(bs):
         out = [str(ids["n"] + i) for i in range(bs)]; ids["n"] += bs; return out
 
-    # covariance pass (the extra sweep LogIX needs for preconditioning)
+    def train_loop(log_active):
+        """One training pass (fwd/bwd/opt.step). log_active -> LogIX logs inline."""
+        opt = torch.optim.Adam(trainable, lr=1e-4)
+        if log_active:
+            run_.setup({"grad": ["log"]}); run_.save(True)
+        _sync(device); t0 = time.perf_counter()
+        for xb, yb in batches:
+            ids["n"] = 0
+            opt.zero_grad(set_to_none=True)
+            if log_active:
+                with run_(data_id=dids(len(xb))):
+                    out = lx(xb); logits = out if not hasattr(out, "logits") else out.logits
+                    F.cross_entropy(logits, yb, reduction="sum").backward()
+            else:
+                out = lx(xb); logits = out if not hasattr(out, "logits") else out.logits
+                F.cross_entropy(logits, yb, reduction="sum").backward()
+            opt.step()
+        if log_active:
+            run_.finalize()
+        _sync(device)
+        return time.perf_counter() - t0
+
+    none_s = train_loop(False)   # baseline on the watched model, logging OFF
+    log_s = train_loop(True)     # same loop, LogIX logging ON (inline, like Traceprop)
+
+    # covariance pass -- the ONLY genuinely extra pass LogIX needs (for K-FAC precond)
     run_.setup({"forward": ["covariance"], "backward": ["covariance"]})
-    _sync(device)
-    t0 = time.perf_counter()
+    _sync(device); t0 = time.perf_counter()
     for xb, yb in batches:
         ids["n"] = 0
         with run_(data_id=dids(len(xb))):
@@ -126,22 +154,7 @@ def logix_arm(model_name, rank, kfac, track, batches, device):
             F.cross_entropy(logits, yb, reduction="sum").backward()
     _sync(device)
     cov_s = time.perf_counter() - t0
-
-    # logging pass (per-example gradient logging)
-    run_.setup({"grad": ["log"]})
-    run_.save(True)
-    _sync(device)
-    t0 = time.perf_counter()
-    for xb, yb in batches:
-        ids["n"] = 0
-        with run_(data_id=dids(len(xb))):
-            lx.zero_grad(set_to_none=True)
-            out = lx(xb); logits = out if not hasattr(out, "logits") else out.logits
-            F.cross_entropy(logits, yb, reduction="sum").backward()
-    run_.finalize()
-    _sync(device)
-    log_s = time.perf_counter() - t0
-    return {"logix_log_s": log_s, "logix_cov_s": cov_s}
+    return {"logix_none_s": none_s, "logix_log_s": log_s, "logix_cov_s": cov_s}
 
 
 def main():
@@ -199,26 +212,32 @@ def main():
     }
 
     if args.with_logix:
-        lg_log, lg_cov = [], []
+        lg_none, lg_log, lg_cov = [], [], []
         for r in range(max(3, args.repeats // 3) + 1):
             d = logix_arm(args.model, args.rank, args.kfac, args.track, batches, device)
             if r == 0:
                 continue
-            lg_log.append(d["logix_log_s"]); lg_cov.append(d["logix_cov_s"])
-            print(f"  logix r{r}: log={d['logix_log_s']:.3f} cov_pass={d['logix_cov_s']:.3f}")
-        lg_log, lg_cov = np.array(lg_log), np.array(lg_cov)
-        none_med = res["none_s_median"]
+            lg_none.append(d["logix_none_s"]); lg_log.append(d["logix_log_s"]); lg_cov.append(d["logix_cov_s"])
+            print(f"  logix r{r}: none={d['logix_none_s']:.3f} log_inline={d['logix_log_s']:.3f} "
+                  f"cov_pass={d['logix_cov_s']:.3f}")
+        lg_none, lg_log, lg_cov = np.array(lg_none), np.array(lg_log), np.array(lg_cov)
+        # FAIR accounting: LogIX logging runs INLINE during training (like Traceprop and
+        # like exp31's ~3.2%), so its overhead is (log - none)/none, NOT a full extra pass.
+        # ONLY the covariance pass is genuinely extra work.
+        inline_pct = float(np.median((lg_log - lg_none) / lg_none) * 100)
+        cov_pass_pct = float(np.median(lg_cov / lg_none) * 100)
         res["logix"] = {
+            "logix_none_s_median": round(float(np.median(lg_none)), 4),
             "logix_log_s_median": round(float(np.median(lg_log)), 4),
             "logix_cov_pass_s_median": round(float(np.median(lg_cov)), 4),
-            # LogIX total attribution = its logging pass + its separate covariance pass,
-            # expressed as a multiple of one plain-training pass over the same data.
-            "logix_total_attribution_s_median": round(float(np.median(lg_log) + np.median(lg_cov)), 4),
-            "logix_total_vs_training_x": round(float((np.median(lg_log) + np.median(lg_cov)) / none_med), 3),
-            "note": "LogIX needs a logging pass AND a separate covariance pass, both EXTRA "
-                    "passes over the data; Traceprop folds both into the single training pass "
-                    f"for +{res['total_overhead_pct']}%. Compare logix_total_vs_training_x (extra "
-                    "passes) against Traceprop's total_overhead_pct.",
+            "logix_inline_logging_pct": round(inline_pct, 3),
+            "logix_covariance_pass_pct_of_training": round(cov_pass_pct, 3),
+            "logix_total_attribution_pct": round(inline_pct + cov_pass_pct, 3),
+            "note": "FAIR: LogIX logging is measured INLINE in the training loop "
+                    "(logix_inline_logging_pct, comparable to exp31 ~3.2%); only the covariance "
+                    "pass is extra (logix_covariance_pass_pct_of_training). LogIX total attribution "
+                    f"= sum of the two. Traceprop total is +{res['total_overhead_pct']}% in ONE "
+                    "pass (no separate covariance pass).",
         }
 
     print(json.dumps(res, indent=2))
@@ -227,9 +246,10 @@ def main():
           f"p_cov={res['mwu_p_cov_gt_log']})")
     if args.with_logix:
         lx = res["logix"]
-        print(f"[overhead-hf] LogIX total attribution = {lx['logix_total_attribution_s_median']}s "
-              f"= {lx['logix_total_vs_training_x']}x a training pass "
-              f"(log {lx['logix_log_s_median']}s + cov-pass {lx['logix_cov_pass_s_median']}s)")
+        print(f"[overhead-hf] LogIX total attribution +{lx['logix_total_attribution_pct']}% "
+              f"= inline logging +{lx['logix_inline_logging_pct']}% + covariance pass "
+              f"+{lx['logix_covariance_pass_pct_of_training']}% (of a training pass)  "
+              f"vs Traceprop +{res['total_overhead_pct']}% single pass")
     os.makedirs("results", exist_ok=True)
     with open(args.out, "w") as f:
         json.dump(res, f, indent=2)
