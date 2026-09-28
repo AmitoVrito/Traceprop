@@ -118,6 +118,7 @@ class LoRAGradientLogger:
         seed: int = 42,
         factored: bool = False,
         kfac: int = 16,
+        inline_precond: bool = False,
     ) -> None:
         if not target_modules:
             raise ValueError(
@@ -142,6 +143,18 @@ class LoRAGradientLogger:
         self.factored = factored
         self._kfac = kfac
         self._fac_PQ: dict[str, Any] = {}  # name -> (P, Q) per-layer sketch mats
+        # Inline K-FAC preconditioning: accumulate the covariance of the two
+        # PROJECTED gradient factors (P g, Q a) per module DURING the factored
+        # logging pass -- reusing the same Pg/Qa the sketch already computes, so
+        # no second (covariance) pass over the data. Stored sketches are left
+        # untouched (never whitened at logging time, which would let noisy
+        # early-training covariance corrupt records); the k x k covariance is
+        # applied only at query time via apply_kfac_precondition(). Off by
+        # default. See kfac_covariances() to read the accumulated statistics.
+        self.inline_precond = inline_precond
+        self._cov_G: dict[str, Any] = {}   # name -> (k_out, k_out) Sum Pg Pg^T
+        self._cov_A: dict[str, Any] = {}   # name -> (k_in,  k_in ) Sum Qa Qa^T
+        self._fac_layout: list = []        # [(name, k_out, k_in)] in sketch-concat order
         self._proj_matrix = None  # dense fallback (D, proj_dim), lazily built
         self.grad_dim: Optional[int] = None  # true concatenated per-sample grad dim
         self.sketch_dim: Optional[int] = None  # stored (projected) dim
@@ -221,6 +234,7 @@ class LoRAGradientLogger:
         import torch
 
         parts = []
+        layout = []
         grad_dim_total = 0
         for salt, name in enumerate(self._names):
             a = self._fwd_input.get(name)
@@ -243,14 +257,50 @@ class LoRAGradientLogger:
                 Pg = torch.einsum("bto,ko->btk", g.float(), P)   # (B,T,k_out)
                 Qa = torch.einsum("bti,li->btl", a.float(), Q)   # (B,T,k_in)
                 S = torch.einsum("btk,btl->bkl", Pg, Qa)          # (B,k_out,k_in)
+                if self.inline_precond:
+                    # Covariance of the PROJECTED factors over all tokens in this
+                    # batch: Sum_{b,t} (P g)(P g)^T and (Q a)(Q a)^T. Reuses Pg/Qa
+                    # already computed above -- the whole cost is two k x k matmuls
+                    # per module per step, no extra pass over the data.
+                    pg2 = Pg.reshape(-1, k_out)  # (B*T, k_out)
+                    qa2 = Qa.reshape(-1, k_in)   # (B*T, k_in)
+                    cg = pg2.transpose(0, 1) @ pg2  # (k_out, k_out)
+                    ca = qa2.transpose(0, 1) @ qa2  # (k_in,  k_in )
+                    if name in self._cov_G:
+                        self._cov_G[name] += cg
+                        self._cov_A[name] += ca
+                    else:
+                        self._cov_G[name] = cg
+                        self._cov_A[name] = ca
             parts.append(S.reshape(S.shape[0], -1))
+            layout.append((name, int(k_out), int(k_in)))
 
         if not parts:
             return None
         self.grad_dim = grad_dim_total
+        self._fac_layout = layout
         sketch = torch.cat(parts, dim=1)
         self.sketch_dim = sketch.shape[1]
         return sketch
+
+    def kfac_covariances(self):
+        """Inline-accumulated K-FAC covariance of the projected factors.
+
+        Returns ``(layout, cov_G, cov_A)`` where ``layout`` is the per-module
+        ``[(name, k_out, k_in), ...]`` block order matching the concatenated
+        factored sketch, and ``cov_G[name]`` / ``cov_A[name]`` are the
+        ``(k_out, k_out)`` / ``(k_in, k_in)`` covariance matrices ``Sum Pg Pg^T``
+        / ``Sum Qa Qa^T`` accumulated over the logging pass (numpy, float64).
+
+        Only populated when the logger was built with ``inline_precond=True``.
+        Feed straight into :func:`apply_kfac_precondition`."""
+        import numpy as np
+
+        cov_G = {k: v.detach().cpu().numpy().astype(np.float64)
+                 for k, v in self._cov_G.items()}
+        cov_A = {k: v.detach().cpu().numpy().astype(np.float64)
+                 for k, v in self._cov_A.items()}
+        return list(self._fac_layout), cov_G, cov_A
 
     def _ensure_projection(self, dim: int, device, dtype):
         """Lazily build the sparse Johnson–Lindenstrauss matrix on-device.
@@ -357,3 +407,71 @@ class LoRAGradientLogger:
 
     def __exit__(self, *exc: Any) -> None:
         self.detach()
+
+
+def _inv_sqrt_damped(M: np.ndarray, damping: float) -> np.ndarray:
+    """Symmetric inverse square root of a PSD matrix with relative damping.
+
+    Damping is scaled by the mean eigenvalue (``trace(M)/k``) so the correction
+    is invariant to the arbitrary overall scale of the accumulated covariance
+    (which depends on token count and loss reduction). Returns ``W`` such that
+    ``W @ W ≈ (M + λ I)^{-1}`` with ``λ = damping · trace(M)/k``."""
+    M = 0.5 * (M + M.T)
+    k = M.shape[0]
+    lam = damping * (np.trace(M) / max(k, 1))
+    w, V = np.linalg.eigh(M + lam * np.eye(k))
+    w = np.clip(w, a_min=1e-12, a_max=None)
+    return (V * (1.0 / np.sqrt(w))) @ V.T
+
+
+def apply_kfac_precondition(sketch, layout, cov_G, cov_A, damping):
+    """K-FAC-whiten a stored factored sketch matrix at query time.
+
+    Each per-module block ``S`` (shape ``(k_out, k_in)``) of every row is
+    replaced by ``W_G S W_A`` where ``W_G = (Ĝ + λ_G I)^{-1/2}`` and
+    ``W_A = (Â + λ_A I)^{-1/2}`` are built from the inline-accumulated
+    sketch-space covariances ``Ĝ = cov_G[name]`` and ``Â = cov_A[name]``.
+
+    The Frobenius inner product of two whitened sketches then equals
+    ``tr(S_jᵀ Ĝ⁻¹ S_i Â⁻¹)`` -- the Kronecker-factored (K-FAC) preconditioned
+    influence, computed entirely in the low-dimensional sketch space. The SAME
+    whitening (built from the training covariance) must be applied to both the
+    train and the query/test sketches before taking dot products.
+
+    Parameters
+    ----------
+    sketch : ndarray, shape (N, sketch_dim)
+        Stored factored sketches, per-module blocks concatenated in ``layout``
+        order (exactly what ``GradientStore.get_projected_matrix()`` returns for
+        a factored logger).
+    layout : list[(name, k_out, k_in)]
+        Per-module block layout, from :meth:`LoRAGradientLogger.kfac_covariances`.
+    cov_G, cov_A : dict[str, ndarray]
+        Sketch-space covariances keyed by module name (same source).
+    damping : float
+        Relative damping strength (see :func:`_inv_sqrt_damped`). Choose it on a
+        held-out split, never on the reported test set.
+
+    Returns
+    -------
+    ndarray, shape (N, sketch_dim)
+        A new whitened sketch matrix; the input is not modified.
+    """
+    sketch = np.asarray(sketch)
+    N = sketch.shape[0]
+    out = np.empty_like(sketch)
+    off = 0
+    for name, k_out, k_in in layout:
+        sz = k_out * k_in
+        block = sketch[:, off:off + sz].reshape(N, k_out, k_in)
+        WG = _inv_sqrt_damped(cov_G[name], damping)   # (k_out, k_out)
+        WA = _inv_sqrt_damped(cov_A[name], damping)   # (k_in,  k_in )
+        white = np.einsum("op,npj,jq->noq", WG, block, WA)
+        out[:, off:off + sz] = white.reshape(N, sz)
+        off += sz
+    if off != sketch.shape[1]:
+        raise ValueError(
+            f"layout blocks sum to {off} columns but sketch has {sketch.shape[1]}; "
+            f"layout does not match this sketch matrix."
+        )
+    return out
