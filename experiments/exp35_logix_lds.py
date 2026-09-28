@@ -261,6 +261,20 @@ def run(args):
     acc = float((logits(target_model, Xte_t).argmax(1) == yte_t).float().mean())
     print(f"[exp35] target test accuracy: {acc:.4f}")
 
+    # Fast sanity gate: a model at (near-)chance has no learnable signal, so its
+    # subset margins are noise and any LDS number is meaningless. Abort BEFORE the
+    # expensive retraining loop instead of burning it on a dead model.
+    _min_acc = getattr(args, "min_target_acc", 0.0)
+    if _min_acc > 0.0 and acc < _min_acc:
+        with torch.no_grad():
+            pred = logits(target_model, Xte_t).argmax(1)
+            dist = torch.bincount(pred, minlength=int(yte_t.max()) + 1).tolist()
+        raise SystemExit(
+            f"[exp35] ABORT: target test acc {acc:.4f} < --min_target_acc {_min_acc} "
+            f"(pred class distribution {dist}). The model is not learning the task -- "
+            f"fix the SETUP (data/epochs/lr/head) before any LDS run. See diag_hf_classifier.py."
+        )
+
     # ---- Traceprop's own post-hoc gradients at this same final checkpoint ----
     G_train = collect_grads_posthoc(target_model, Xtr_t, ytr_t, scope_patterns, last_n)
     G_test = collect_grads_posthoc(target_model, Xte_t, yte_t, scope_patterns, last_n)
@@ -1004,6 +1018,10 @@ def main():
     ap.add_argument("--precond_val_frac", type=float, default=0.3,
                     help="fraction of test examples held out to pick the inline-precond "
                          "damping (never used in the reported eval-split LDS)")
+    ap.add_argument("--min_target_acc", type=float, default=0.0,
+                    help="abort before the retraining loop if the target model's test "
+                         "accuracy is below this (guards against running LDS on a "
+                         "non-learning model at chance). 0 disables.")
     args = ap.parse_args()
     run(args)
 
