@@ -243,3 +243,51 @@ def validate_logix_gradients(run_, model, tracked_names, xb, yb, loss_fn,
         "scale_ratio_max": max(ratios) if ratios else None,
         "scale_nonuniformity": max(ratios) / min(ratios) if ratios else None,
     }
+
+
+def precondition_kfac_permodule(src, state, damping=None):
+    """Drop-in replacement for logix's precondition_kfac with PER-MODULE relative
+    damping. The passed ``damping`` is interpreted as a RELATIVE strength lambda_rel;
+    each module's absolute damping is ``lambda_rel * mean(that module's K-FAC
+    eigenvalues)`` -- matching Traceprop's inline per-module scheme.
+
+    The rotation/division math is a faithful copy of logix's own precondition_kfac
+    (einops einsum in the covariance eigenbasis); the ONLY change is how the damping
+    scalar is derived per module. Two safety differences from the original: the
+    eigenvalue tensor is updated OUT OF PLACE (the original's ``full_eigval +=``
+    can alias state), and the ``damping is None`` module-0 leak is avoided by
+    always computing a per-module value. A unit test asserts that, given a UNIFORM
+    absolute damping, this reproduces logix's original output exactly, so any LDS
+    difference comes from the damping VALUE, not a reimplementation artifact.
+    """
+    import torch
+    from einops import einsum
+    from logix.utils import nested_dict
+
+    preconditioned = nested_dict()
+    cov_eigval, cov_eigvec = state.get_covariance_svd_state()
+    lam_rel = 0.1 if damping is None else damping
+    for module_name in src.keys():
+        src_grad = src[module_name]["grad"]
+        device = src_grad.device
+        module_eigvec = cov_eigvec[module_name]
+        fwd_eigvec = module_eigvec["forward"].to(device=device)
+        bwd_eigvec = module_eigvec["backward"].to(device=device)
+        module_eigval = cov_eigval[module_name]
+        if isinstance(module_eigval, torch.Tensor):
+            full_eigval = module_eigval.to(device=device)
+        else:
+            fwd_eigval = module_eigval["forward"]
+            bwd_eigval = module_eigval["backward"]
+            full_eigval = torch.outer(bwd_eigval, fwd_eigval).to(device=device)
+        full_eigval = full_eigval + lam_rel * torch.mean(full_eigval)  # per-module, out-of-place
+        rotated_grad = einsum(
+            bwd_eigvec.t(), src_grad, fwd_eigvec,
+            "a b, batch b c, c d -> batch a d",
+        )
+        prec_rotated_grad = rotated_grad / full_eigval
+        preconditioned[module_name]["grad"] = einsum(
+            bwd_eigvec, prec_rotated_grad, fwd_eigvec.t(),
+            "a b, batch b c, c d -> batch a d",
+        )
+    return preconditioned

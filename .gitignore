@@ -20,3 +20,5 @@ trak_cache/
 uv.lock
 results.zip
 experiments/logix/
+
+.venv310/

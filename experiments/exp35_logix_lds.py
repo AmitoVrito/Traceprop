@@ -68,7 +68,9 @@ def run(args):
     patch_loralinear_weight_proxy()
 
     from traceprop.attribution.gradient_store import GradientStore
-    from traceprop.llm import LoRAGradientLogger, select_lora_linears
+    from traceprop.llm import (
+        LoRAGradientLogger, select_lora_linears, apply_kfac_precondition,
+    )
 
     device = args.device
     if device == "cuda" and not getattr(args, "skip_gpu_check", False):
@@ -94,9 +96,29 @@ def run(args):
     yte_t = torch.tensor(yte, device=device)
     n_train, n_test = len(Xtr), len(Xte)
 
+    # Held-out split of the TEST examples used ONLY to pick the inline-precond
+    # damping lambda (never the reported/eval set). Deterministic in args.seed so
+    # the split is reproducible and can be re-applied downstream (saved to npz).
+    _perm = np.random.default_rng(args.seed + 777).permutation(n_test)
+    _n_val = max(5, int(round(getattr(args, "precond_val_frac", 0.3) * n_test)))
+    precond_val_idx = np.sort(_perm[:_n_val])
+    precond_eval_idx = np.sort(_perm[_n_val:])
+
+    # Shared RELATIVE damping grid: used to tune BOTH our inline whitening and
+    # LogIX's preconditioning, on the same val split -- the fairness requirement.
+    damping_grid = [float(x) for x in
+                    getattr(args, "precond_damping_grid",
+                            "1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1e0,1e1").split(",")]
+
+    # Target-model init seed is 1234+args.seed so different --seed values give
+    # genuinely different target models (not just different data/subsets). seed=0
+    # -> 1234, reproducing the pre-fairness-check run exactly. Within one run all
+    # subset-retrained models share this init (standard LDS practice).
+    _model_seed = 1234 + args.seed
+
     def new_model():
-        torch.manual_seed(1234)
-        np.random.seed(1234)
+        torch.manual_seed(_model_seed)
+        np.random.seed(_model_seed)
         if args.backend == "tiny":
             m = build_tiny_classifier(vocab, seq=args.seq, r=args.rank, n_blocks=args.n_blocks)
         else:
@@ -137,20 +159,30 @@ def run(args):
                 opt.step()
         return model
 
+    # collect_grads_posthoc stashes the wall-clock of the logging pass and, when
+    # inline_precond=True, the inline-accumulated K-FAC covariance here, so the
+    # caller can read them without changing the (matrix) return type.
+    _collect_info = {"elapsed": None, "cov": None}
+
     def collect_grads_posthoc(model, X, y, patterns, last_n, proj_dim=None,
-                               factored=False, kfac=None):
+                               factored=False, kfac=None, inline_precond=False):
+        import time
         proj_dim = proj_dim if proj_dim is not None else args.proj_dim
         store = GradientStore(proj_dim=proj_dim, seed=42)
         targets = select_lora_linears(model, patterns, last_n_blocks=last_n)
         lg = LoRAGradientLogger(store, targets, proj_dim=proj_dim,
-                                 factored=factored, kfac=kfac or 16)
+                                 factored=factored, kfac=kfac or 16,
+                                 inline_precond=inline_precond)
         n = len(X)
+        t0 = time.perf_counter()
         for s in range(0, n, args.batch):
             xb, yb = X[s:s + args.batch], y[s:s + args.batch]
             model.zero_grad(set_to_none=True)
             lo = logits(model, xb)
             F.cross_entropy(lo, yb, reduction="sum").backward()
             lg.flush_step(sample_indices=range(s, s + len(xb)))
+        _collect_info["elapsed"] = time.perf_counter() - t0
+        _collect_info["cov"] = lg.kfac_covariances() if inline_precond else None
         lg.detach()
         return store.get_projected_matrix()
 
@@ -427,16 +459,19 @@ def run(args):
             F.cross_entropy(logits(logix_model, xb), yb, reduction="sum").backward()
         test_logs.append(run_.get_log(copy=True))
 
-    def influence_matrix(precondition, hessian):
+    def influence_matrix(precondition, hessian, damping=None):
         """Assemble the full (n_test, n_train) score matrix by querying each
         test batch's log against the whole train log_loader and concatenating
         along the test axis -- compute_influence_all's src_log is a single
-        batch's log, so we call it once per test batch."""
+        batch's log, so we call it once per test batch. ``damping`` is passed
+        straight to LogIX (absolute, added to the K-FAC eigenvalues); None uses
+        LogIX's own default (0.1*mean eigval)."""
         rows = []
         for data_id, log in test_logs:
             res = run_.compute_influence_all(
                 src_log=(data_id, log), loader=log_loader,
                 mode="dot", precondition=precondition, hessian=hessian,
+                damping=damping,
             )
             rows.append(res["influence"].numpy())
         return np.concatenate(rows, axis=0)  # (n_test, n_train)
@@ -472,6 +507,116 @@ def run(args):
     else:
         logix_precond = logix_dot
         precond_note = "fallback_to_dot: post-add_lora covariance accumulation pass failed"
+
+    # ---- Probe: dump LogIX's covariance/eigval state shapes to verify what space
+    # LogIX actually preconditions in (full d x d, or its own add_lora-projected
+    # rank-r space), and test whether repeated preconditioned calls mutate state
+    # (the `full_eigval += damping` aliasing concern). Exits before retraining. ----
+    if getattr(args, "dump_cov_shapes", False):
+        ev_state, evec_state = run_.state.get_covariance_svd_state()
+        info = {"n_tracked_layers": n_tracked_layers, "lora_rank": args.rank,
+                "lora_init": effective_init, "modules": {}}
+        for i, (mod, ev) in enumerate(ev_state.items()):
+            vec = evec_state.get(mod, {})
+            entry = {}
+            if isinstance(ev, dict):
+                entry["eigval_kind"] = "dict(forward,backward)"
+                entry["fwd_eigval_shape"] = list(ev["forward"].shape)
+                entry["bwd_eigval_shape"] = list(ev["backward"].shape)
+            else:
+                entry["eigval_kind"] = "tensor"
+                entry["eigval_shape"] = list(ev.shape)
+            if isinstance(vec, dict):
+                if "forward" in vec:
+                    entry["fwd_eigvec_shape"] = list(vec["forward"].shape)
+                if "backward" in vec:
+                    entry["bwd_eigvec_shape"] = list(vec["backward"].shape)
+            info["modules"][mod] = entry
+            if i >= 4:
+                break
+        # mutation test: identical damping twice -> identical scores iff no state mutation
+        m1 = influence_matrix(precondition=True, hessian="kfac", damping=1e-7)
+        m2 = influence_matrix(precondition=True, hessian="kfac", damping=1e-7)
+        info["repeat_same_damping_identical"] = bool(np.allclose(m1, m2))
+        info["state_mutated_across_calls"] = not info["repeat_same_damping_identical"]
+        # default-bug test: does damping=None leak module-0's damping to all modules?
+        # (compare default None-run against an explicit per-module-uniform absolute)
+        info["default_run_note"] = ("logix_preconditioned above used damping=None; LogIX's "
+                                    "precondition_kfac sets damping inside the module loop, so "
+                                    "modules after the first reuse module-0's absolute damping.")
+        os.makedirs("results", exist_ok=True)
+        with open("results/exp35_cov_shapes.json", "w") as f:
+            json.dump(info, f, indent=2)
+        print(json.dumps(info, indent=2))
+        raise SystemExit(0)
+
+    # ---- Check 1 (fairness): give LogIX the SAME damping-tuning opportunity we
+    # give ourselves. LogIX's damping is ABSOLUTE (added to K-FAC eigenvalues);
+    # its default (None) = 0.1 * mean(eigval) = relative 0.1. To sweep it on the
+    # SAME relative grid as our inline whitening, convert each lambda_rel to
+    # absolute via LogIX's own global mean K-FAC eigenvalue. Score the whole grid
+    # here; selection on the val split happens after retraining (with margins).
+    logix_precond_grid = {}       # lambda_rel -> (n_test, n_train) score matrix
+    logix_tuned_info = {}
+    if getattr(args, "tune_logix", False) and precondition_hessian_ok \
+            and precond_note == "computed":
+        ev_state, _ = run_.state.get_covariance_svd_state()
+        eig_means = []
+        for _mod, ev in ev_state.items():
+            if isinstance(ev, dict):
+                full = torch.outer(ev["backward"].float().flatten(),
+                                    ev["forward"].float().flatten())
+            else:
+                full = ev.float()
+            eig_means.append(float(full.mean()))
+        global_mean_eig = float(np.mean(eig_means)) if eig_means else None
+
+        # Check 2 (item): give LogIX PER-MODULE relative damping, matching what our
+        # inline whitening does (lambda_rel * that module's mean eigval, per module),
+        # instead of a single global absolute damping. Monkeypatch precondition_kfac
+        # so the passed `damping` is interpreted as lambda_rel and scaled per module.
+        # Never uses LogIX's damping=None path (which leaks module-0's damping).
+        permodule = getattr(args, "logix_permodule_damping", False)
+        default_bug = {}
+        if permodule:
+            import logix.analysis.influence_function as _lif
+            from logix_strict import precondition_kfac_permodule
+            _lif.precondition_kfac = precondition_kfac_permodule
+
+            # Default-bug probe: does LogIX's damping=None run (module-0 leak, the
+            # UNPATCHED logix_precond above) differ from a correct per-module 0.1?
+            correct01 = influence_matrix(precondition=True, hessian="kfac", damping=0.1)
+            default_bug = {
+                "logix_default_differs_from_correct_permodule_0.1":
+                    bool(not np.allclose(logix_precond, correct01)),
+                "max_abs_diff": float(np.abs(logix_precond - correct01).max()),
+                "interpretation": "if True, LogIX's damping=None default leaks module-0's "
+                                  "absolute damping to all later modules (a real LogIX bug).",
+            }
+
+        if global_mean_eig and global_mean_eig > 0:
+            logix_tuned_info = {
+                "global_mean_kfac_eigval": global_mean_eig,
+                "logix_default_damping_rule": "0.1 * mean(kfac_eigval) per module (relative 0.1)",
+                "logix_default_damping_abs_nominal": 0.1 * global_mean_eig,
+                "damping_granularity": ("per_module_relative" if permodule
+                                        else "global_absolute"),
+                "kfac_space": "logix add_lora rank-%d projected (eigval per factor ~rank-sized), "
+                              "NOT full d x d -- confirmed via cov shape probe" % args.rank,
+                "default_damping_bug": default_bug,
+                "note": ("LogIX preconditions in its own add_lora-projected rank space. "
+                         "per_module_relative: damping = lambda_rel * that module's mean eigval "
+                         "(matches Traceprop). global_absolute: lambda_rel * global mean eigval."),
+            }
+            for lam_rel in damping_grid:
+                d_pass = lam_rel if permodule else lam_rel * global_mean_eig
+                mat = influence_matrix(precondition=True, hessian="kfac", damping=d_pass)
+                logix_precond_grid[lam_rel] = mat
+            print(f"[exp35] LogIX damping sweep ({'per-module' if permodule else 'global'} "
+                  f"relative): global mean K-FAC eigval={global_mean_eig:.3e}; scored "
+                  f"{len(logix_precond_grid)} grid points. default_bug={default_bug.get('logix_default_differs_from_correct_permodule_0.1')}")
+        else:
+            print("[exp35] WARNING: could not extract LogIX mean eigenvalue; skipping LogIX tuning.")
 
     # ---- Traceprop's own gradients at the storage-matched proj_dim, for a
     # genuine apples-to-apples comparison against LogIX's natural footprint
@@ -528,8 +673,30 @@ def run(args):
 
                 G_train_f = collect_grads_posthoc(
                     target_model, Xtr_t, ytr_t, scope_patterns, last_n, factored=True, kfac=kfac)
+                t_base = _collect_info["elapsed"]
                 G_test_f = collect_grads_posthoc(
                     target_model, Xte_t, yte_t, scope_patterns, last_n, factored=True, kfac=kfac)
+
+                # Inline K-FAC: re-log the TRAIN pass with covariance accumulation
+                # on (same sketches, plus the k x k covariance of the projected
+                # factors), and measure the extra wall-clock vs the plain factored
+                # pass above -- the honest cost of "no second covariance pass".
+                cov_bundle = None
+                inline_overhead_pct = None
+                if getattr(args, "inline_precond", False):
+                    G_train_f = collect_grads_posthoc(
+                        target_model, Xtr_t, ytr_t, scope_patterns, last_n,
+                        factored=True, kfac=kfac, inline_precond=True)
+                    t_cov = _collect_info["elapsed"]
+                    cov_bundle = _collect_info["cov"]
+                    inline_overhead_pct = (
+                        (t_cov - t_base) / t_base * 100.0 if t_base else None)
+                    print(f"[exp35] inline-precond covariance accumulation overhead "
+                          f"(kfac={kfac}, {dtype_note}): {t_base*1e3:.1f}ms plain vs "
+                          f"{t_cov*1e3:.1f}ms with covariance "
+                          f"({inline_overhead_pct:+.2f}% of the logging pass) -- no "
+                          f"second pass over the data.")
+
                 if suffix:  # simulate fp16 storage precision loss, not just a free bigger kfac
                     G_train_f = G_train_f.astype(np.float16).astype(np.float32)
                     G_test_f = G_test_f.astype(np.float16).astype(np.float32)
@@ -537,6 +704,8 @@ def run(args):
                     "G_train": G_train_f, "G_test": G_test_f,
                     "bytes_achieved": bytes_achieved, "rel_error": rel_error,
                     "dtype": dtype_note, "kfac": kfac,
+                    "cov_bundle": cov_bundle,
+                    "inline_overhead_pct": inline_overhead_pct,
                 }
 
     # ---- ground-truth LDS margins from subset retraining ----
@@ -578,11 +747,73 @@ def run(args):
         ("logix_dot", logix_dot),
         ("logix_preconditioned", logix_precond),
     ]
+    def lds_on_subset(attr, idx):
+        """Mean Spearman LDS over a SUBSET of test examples (for held-out
+        damping selection -- never touches the reported eval examples)."""
+        pred = masks @ attr.T  # (n_subsets, n_test)
+        rs = [spearmanr(pred[:, i], margins[:, i]).correlation for i in idx]
+        rs = np.array(rs, dtype=np.float64)
+        return float(np.nanmean(rs[~np.isnan(rs)]))
+
+    # ---- Check 1: select LogIX's best damping on the SAME val split, report as
+    # logix_preconditioned_tuned (tuned-vs-tuned fairness). ----
+    if logix_precond_grid:
+        best_lg = None  # (lambda_rel, val_lds, mat)
+        lg_grid_val = {}
+        for lam_rel, mat in logix_precond_grid.items():
+            v_lds = lds_on_subset(mat, precond_val_idx)
+            lg_grid_val[f"{lam_rel:g}"] = round(v_lds, 4)
+            if best_lg is None or v_lds > best_lg[1]:
+                best_lg = (lam_rel, v_lds, mat)
+        score_list.append(("logix_preconditioned_tuned", best_lg[2]))
+        logix_tuned_info.update({
+            "chosen_lambda_rel": best_lg[0],
+            "chosen_damping_abs": best_lg[0] * logix_tuned_info["global_mean_kfac_eigval"],
+            "chosen_val_lds": round(best_lg[1], 4),
+            "grid_val_lds": lg_grid_val,
+        })
+        print(f"[exp35] LogIX tuned: chose lambda_rel={best_lg[0]:g} "
+              f"(val LDS={best_lg[1]:+.4f}); grid={lg_grid_val}")
+
+    inline_precond_selection = {}  # label -> {chosen_damping, grid_val_lds, ...}
+
     for label, v in factored_variants.items():
         score_list.append((f"traceprop_factored_kfac{label}_dot",
                             dot_scores(v["G_train"], v["G_test"])))
         score_list.append((f"traceprop_factored_kfac{label}_trak",
                             trak_scores(v["G_train"], v["G_test"])))
+
+        # ---- inline K-FAC preconditioning: whiten both train & test factored
+        # sketches with the TRAIN covariance accumulated inline, pick damping on
+        # the held-out VAL split, score with the chosen damping. Same-pass
+        # covariance = no second pass, unlike LogIX's separate covariance sweep.
+        if v.get("cov_bundle") is not None:
+            layout, cov_G, cov_A = v["cov_bundle"]
+            grid_val_lds = {}
+            best = None  # (damping, val_lds, attr)
+            for damp in damping_grid:
+                Wtr = apply_kfac_precondition(v["G_train"], layout, cov_G, cov_A, damp)
+                Wte = apply_kfac_precondition(v["G_test"], layout, cov_G, cov_A, damp)
+                attr = dot_scores(Wtr, Wte)
+                val_lds = lds_on_subset(attr, precond_val_idx)
+                grid_val_lds[f"{damp:g}"] = round(val_lds, 4)
+                if best is None or val_lds > best[1]:
+                    best = (damp, val_lds, attr)
+            chosen_damp, chosen_val_lds, best_attr = best
+            score_list.append(
+                (f"traceprop_factored_kfac{label}_inlineprecond", best_attr))
+            inline_precond_selection[label] = {
+                "chosen_damping": chosen_damp,
+                "chosen_val_lds": round(chosen_val_lds, 4),
+                "grid_val_lds": grid_val_lds,
+                "n_val": int(len(precond_val_idx)),
+                "n_eval": int(len(precond_eval_idx)),
+                "inline_overhead_pct": (round(v["inline_overhead_pct"], 3)
+                                        if v["inline_overhead_pct"] is not None else None),
+            }
+            print(f"[exp35] inline-precond kfac={label}: chose damping={chosen_damp:g} "
+                  f"(val LDS={chosen_val_lds:+.4f} over {len(precond_val_idx)} held-out "
+                  f"val examples); grid={grid_val_lds}")
 
     results, per_example_r, score_matrices = {}, {}, {}
     for name, mat in score_list:
@@ -594,6 +825,17 @@ def run(args):
     mean, std, rs_arr = lds_for(rng2.standard_normal((n_test, n_train)).astype(np.float32))
     results["random"] = (mean, std)
     per_example_r["random"] = rs_arr
+
+    # Held-out eval-only LDS: mean over the eval split ONLY (disjoint from the
+    # val examples used to pick the inline-precond damping), so the reported
+    # inline-precond number has zero tuning leakage. Computed from the already-
+    # stored per-example Spearman r, no rescoring.
+    def _heldout(rs_arr):
+        sub = rs_arr[precond_eval_idx]
+        sub = sub[~np.isnan(sub)]
+        return {"mean": round(float(np.mean(sub)), 4),
+                "std": round(float(np.std(sub)), 4)}
+    lds_heldout_eval = {name: _heldout(per_example_r[name]) for name in per_example_r}
 
     out = {
         "backend": args.backend,
@@ -639,11 +881,24 @@ def run(args):
         "logix_preconditioned_note": precond_note,
         "gradient_validation": gradient_validation,
         "factored_gradient_validation": factored_gradient_validation,
+        "inline_precond_selection": inline_precond_selection,
+        "logix_tuned_selection": logix_tuned_info,
+        "precond_val_eval_split": {
+            "val_idx": [int(i) for i in precond_val_idx],
+            "eval_idx": [int(i) for i in precond_eval_idx],
+            "note": "inline-precond damping is chosen on val_idx only; lds_heldout_eval "
+                    "is reported on eval_idx (disjoint) so there is no tuning leakage. "
+                    "Downstream two-way bootstrap must restrict to eval_idx.",
+        },
         "lds": {k: {"mean": round(v[0], 4), "std": round(v[1], 4)} for k, v in results.items()},
+        "lds_heldout_eval": lds_heldout_eval,
     }
     print("\n=== LDS: Traceprop vs LogIX (own compute_influence_all API) ===")
+    print(f"    [full n_test={n_test}]      [held-out eval n={len(precond_eval_idx)}]")
     for k, v in out["lds"].items():
-        print(f"  {k:<22} {v['mean']:+.4f} +/- {v['std']:.4f}")
+        he = out["lds_heldout_eval"].get(k, {})
+        print(f"  {k:<38} {v['mean']:+.4f} +/- {v['std']:.4f}   "
+              f"{he.get('mean', float('nan')):+.4f} +/- {he.get('std', float('nan')):.4f}")
     print(json.dumps(out, indent=2))
 
     os.makedirs("results", exist_ok=True)
@@ -660,6 +915,7 @@ def run(args):
         json.dump(out, f, indent=2)
     print(f"\nsaved -> {fn}")
     np.savez(npz_fn, masks=masks, margins=margins,
+             precond_val_idx=precond_val_idx, precond_eval_idx=precond_eval_idx,
              **{f"r_{k}": v for k, v in per_example_r.items()},
              **{f"attr_{k}": v for k, v in score_matrices.items()})
     print(f"saved -> {npz_fn} (per-example scores + raw (n_test, n_train) attribution "
@@ -710,6 +966,34 @@ def main():
                          "instead of 4, allowing a larger kfac at the same byte budget); the "
                          "sketch is round-tripped through np.float16 to simulate real storage "
                          "precision loss, not just given a bigger kfac for free")
+    ap.add_argument("--inline_precond", action="store_true",
+                    help="with --factored, accumulate K-FAC covariance of the projected "
+                         "factors INLINE during the (same) logging pass and apply damped "
+                         "whitening at query time -- the 'no second covariance pass' path. "
+                         "Adds traceprop_factored_kfac*_inlineprecond scores.")
+    ap.add_argument("--precond_damping_grid",
+                    default="1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1e0,1e1",
+                    help="comma-separated relative-damping candidates, used for BOTH inline-"
+                         "precond AND (with --tune_logix) LogIX's preconditioning; the best on "
+                         "the held-out val split is chosen and reported on the disjoint eval "
+                         "split (lds_heldout_eval). Grid extends below 1e-3 to confirm the peak.")
+    ap.add_argument("--dump_cov_shapes", action="store_true",
+                    help="print LogIX covariance/eigval state shapes (to verify the "
+                         "preconditioning space) + a state-mutation test, then exit before "
+                         "retraining")
+    ap.add_argument("--logix_permodule_damping", action="store_true",
+                    help="with --tune_logix, give LogIX PER-MODULE relative damping (lambda_rel * "
+                         "that module's mean K-FAC eigval, monkeypatching precondition_kfac) to "
+                         "match Traceprop's per-module scheme, instead of one global absolute "
+                         "damping. Also probes whether LogIX's damping=None default-bug fires.")
+    ap.add_argument("--tune_logix", action="store_true",
+                    help="sweep LogIX's preconditioning damping over the SAME relative grid on "
+                         "the SAME val split (converted to LogIX's absolute scale via its own "
+                         "mean K-FAC eigenvalue) and report the best as logix_preconditioned_"
+                         "tuned -- the tuned-vs-tuned fairness comparison")
+    ap.add_argument("--precond_val_frac", type=float, default=0.3,
+                    help="fraction of test examples held out to pick the inline-precond "
+                         "damping (never used in the reported eval-split LDS)")
     args = ap.parse_args()
     run(args)
 
