@@ -152,8 +152,16 @@ def build_hf_classifier(model_name, r=8, n_classes=2):
     base = base.float()  # force fp32: transformers 5.x honours the config torch_dtype (often
                          # fp16), which destabilises LoRA retraining and breaks the tiny-backend
                          # fp32 methodology parity; attribution upcasts to fp32 anyway.
-    if base.config.pad_token_id is None:
-        base.config.pad_token_id = base.config.eos_token_id
+    # CRITICAL: the model's pad_token_id MUST equal the id the tokenizer actually
+    # pads with, or decoder sequence-classification pools the LAST NON-PAD token at
+    # the wrong position (a pad embedding) -> near-constant representation -> chance
+    # accuracy. Pythia pads with <|padding|> (id 1), NOT eos (id 0); mirror load_sst2's
+    # tokenizer setup so the two always agree.
+    from transformers import AutoTokenizer
+    _tok = AutoTokenizer.from_pretrained(model_name)
+    if _tok.pad_token is None:
+        _tok.pad_token = _tok.eos_token
+    base.config.pad_token_id = _tok.pad_token_id
     target = ["c_attn"] if "gpt2" in model_name else ["query_key_value"]
     cfg = LoraConfig(r=r, lora_alpha=2 * r, target_modules=target, task_type="SEQ_CLS",
                      modules_to_save=["score", "classifier"])
