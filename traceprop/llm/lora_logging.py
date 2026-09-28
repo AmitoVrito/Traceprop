@@ -252,26 +252,30 @@ class LoRAGradientLogger:
                 P = self._sparse_jl(k_out, d_out, a.device, salt * 2 + 1)
                 Q = self._sparse_jl(k_in, d_in, a.device, salt * 2 + 2)
                 self._fac_PQ[name] = PQ = (P, Q)
+                if self.inline_precond:
+                    # Preallocate the fp32 covariance accumulators ONCE, here in the
+                    # setup path -- so the per-step hot path below is branch-free and
+                    # allocation-free (just two in-place addmm_).
+                    self._cov_G[name] = torch.zeros(k_out, k_out, device=a.device,
+                                                    dtype=torch.float32)
+                    self._cov_A[name] = torch.zeros(k_in, k_in, device=a.device,
+                                                    dtype=torch.float32)
             P, Q = PQ
             with torch.no_grad():
                 Pg = torch.einsum("bto,ko->btk", g.float(), P)   # (B,T,k_out)
                 Qa = torch.einsum("bti,li->btl", a.float(), Q)   # (B,T,k_in)
                 S = torch.einsum("btk,btl->bkl", Pg, Qa)          # (B,k_out,k_in)
                 if self.inline_precond:
-                    # Covariance of the PROJECTED factors over all tokens in this
-                    # batch: Sum_{b,t} (P g)(P g)^T and (Q a)(Q a)^T. Reuses Pg/Qa
-                    # already computed above -- the whole cost is two k x k matmuls
-                    # per module per step, no extra pass over the data.
+                    # Covariance of the PROJECTED factors over all tokens this batch:
+                    # cov_G += (P g)^T (P g), cov_A += (Q a)^T (Q a). In-place fused
+                    # addmm_ into preallocated buffers -- no per-step allocation, no
+                    # dict-membership branch. Reuses Pg/Qa already computed above, so
+                    # the marginal cost is two small (k x BT)@(BT x k) matmuls; no
+                    # extra pass over the data.
                     pg2 = Pg.reshape(-1, k_out)  # (B*T, k_out)
                     qa2 = Qa.reshape(-1, k_in)   # (B*T, k_in)
-                    cg = pg2.transpose(0, 1) @ pg2  # (k_out, k_out)
-                    ca = qa2.transpose(0, 1) @ qa2  # (k_in,  k_in )
-                    if name in self._cov_G:
-                        self._cov_G[name] += cg
-                        self._cov_A[name] += ca
-                    else:
-                        self._cov_G[name] = cg
-                        self._cov_A[name] = ca
+                    self._cov_G[name].addmm_(pg2.transpose(0, 1), pg2)
+                    self._cov_A[name].addmm_(qa2.transpose(0, 1), qa2)
             parts.append(S.reshape(S.shape[0], -1))
             layout.append((name, int(k_out), int(k_in)))
 
