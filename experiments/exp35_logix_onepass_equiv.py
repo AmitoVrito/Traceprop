@@ -88,6 +88,17 @@ def main():
             pass_over(train=True)
             run_.finalize()
 
+        # grab the raw covariance state (pre-SVD) for a direct one-pass vs two-pass compare
+        cov_state = run_.state.get_covariance_state()
+        cov_np = {}
+        for mod, d in cov_state.items():
+            if isinstance(d, dict):
+                for k, v in d.items():
+                    if hasattr(v, "detach"):
+                        cov_np[f"{mod}::{k}"] = v.detach().cpu().numpy().astype(np.float64)
+            elif hasattr(d, "detach"):
+                cov_np[mod] = d.detach().cpu().numpy().astype(np.float64)
+
         loader = run_.build_log_dataloader(batch_size=16, flatten=False)
         run_.eval()
         def score(precondition, damping):
@@ -98,22 +109,44 @@ def main():
                                                  hessian="kfac", damping=damping)
                 rows.append(res["influence"].numpy())
             return np.concatenate(rows, axis=0)
-        return {"dot": score(False, None),                 # no covariance -> tests logged-grad equiv
-                "precond_default": score(True, None),      # default damping (has module-0 leak bug)
-                "precond_fixed": score(True, 1e-6)}        # explicit damping -> removes leak bug
+        # per-module RELATIVE damping (0.01, 0.1) via the vetted monkeypatch -> realistic,
+        # well-conditioned (not the near-singular 1e-6 that amplifies summation-order noise)
+        import logix.analysis.influence_function as _lif
+        from logix_strict import precondition_kfac_permodule
+        _lif.precondition_kfac = precondition_kfac_permodule
+        return {"cov": cov_np,
+                "dot": score(False, None),
+                "precond_rel_0.01": score(True, 0.01),
+                "precond_rel_0.1": score(True, 0.1)}
 
     two = logix_scores(one_pass=False)
     one = logix_scores(one_pass=True)
-    for key in ("dot", "precond_default", "precond_fixed"):
+
+    # (1) covariance states, per module
+    print("=== covariance state: one-pass vs two-pass (seeded projection) ===")
+    worst = 0.0; ratios = []
+    for k in sorted(one["cov"]):
+        a, b = one["cov"][k], two["cov"][k]
+        denom = np.abs(b).max() + 1e-30
+        worst = max(worst, float(np.abs(a - b).max() / denom))
+        m = np.abs(b) > denom * 1e-3
+        if m.any():
+            ratios.append(float(np.median(a[m] / b[m])))
+    ratios = np.array(ratios)
+    print(f"  {len(one['cov'])} covariance tensors; worst max-relative-diff = {worst:.3e}  "
+          f"allclose(rtol=1e-5)={all(np.allclose(one['cov'][k], two['cov'][k], rtol=1e-5, atol=1e-8) for k in one['cov'])}")
+    print(f"  per-tensor one/two ratio: median={np.median(ratios):.4f} min={ratios.min():.4f} "
+          f"max={ratios.max():.4f}  (constant ratio -> normalization/count diff; varied -> real diff)")
+
+    # (2) scores at realistic per-module relative damping
+    for key in ("dot", "precond_rel_0.01", "precond_rel_0.1"):
         a, b = one[key], two[key]
         ok = np.allclose(a, b, rtol=1e-4, atol=1e-6)
-        md = float(np.abs(a - b).max())
-        cr = float(np.corrcoef(a.ravel(), b.ravel())[0, 1])
+        md = float(np.abs(a - b).max()); cr = float(np.corrcoef(a.ravel(), b.ravel())[0, 1])
         print(f"[{key:<16}] one==two: allclose={ok}  max_abs_diff={md:.3e}  corr={cr:.6f}")
-    print("\nINTERPRETATION: dot identical -> logged grads match (one-pass logging is correct); "
-          "precond_fixed identical -> covariance matches too (difference was only the default-damping "
-          "leak bug); precond_default differing while precond_fixed matches confirms it's the bug, "
-          "not a real one-pass/two-pass covariance difference.")
+    print("\nVERDICT: if covariance worst-rel-diff ~float-eps AND precond_rel_* agree -> "
+          "one-pass == two-pass (the earlier diff was the near-singular 1e-6 damping); state "
+          "'one-pass ≡ two-pass' and fairrand IS the single-pass LogIX-random quality.")
 
 
 if __name__ == "__main__":
