@@ -119,6 +119,7 @@ class LoRAGradientLogger:
         factored: bool = False,
         kfac: int = 16,
         inline_precond: bool = False,
+        grouped_dispatch: bool = False,
     ) -> None:
         if not target_modules:
             raise ValueError(
@@ -155,6 +156,21 @@ class LoRAGradientLogger:
         self._cov_G: dict[str, Any] = {}   # name -> (k_out, k_out) Sum Pg Pg^T
         self._cov_A: dict[str, Any] = {}   # name -> (k_in,  k_in ) Sum Qa Qa^T
         self._fac_layout: list = []        # [(name, k_out, k_in)] in sketch-concat order
+        # Grouped batched dispatch (opt-in, off by default -- see
+        # _factored_sketch_grouped for the full rationale). Modules sharing an
+        # identical (d_out, d_in) shape, the common case across LoRA layers,
+        # are projected and covariance-accumulated with ONE batched einsum/bmm
+        # per shape group instead of one per module, cutting kernel-launch
+        # count roughly by the group size. Mathematically identical to the
+        # per-module loop (same P/Q, same per-module sums); only the number
+        # of kernel launches changes, not the arithmetic.
+        self.grouped_dispatch = grouped_dispatch
+        self._fac_groups_built = False
+        self._fac_groups: dict = {}        # (d_out,d_in,k_out,k_in) -> [name, ...]
+        self._fac_P_stack: dict = {}       # group key -> (M,k_out,d_out)
+        self._fac_Q_stack: dict = {}       # group key -> (M,k_in,d_in)
+        self._cov_G_stack: dict = {}       # group key -> (M,k_out,k_out)
+        self._cov_A_stack: dict = {}       # group key -> (M,k_in,k_in)
         self._proj_matrix = None  # dense fallback (D, proj_dim), lazily built
         self.grad_dim: Optional[int] = None  # true concatenated per-sample grad dim
         self.sketch_dim: Optional[int] = None  # stored (projected) dim
@@ -230,7 +246,22 @@ class LoRAGradientLogger:
         Σ_t (P g_t) ⊗ (Q a_t) with small JL maps P:(k_out,d_out), Q:(k_in,d_in) —
         never materialising the d_out·d_in outer product or a large projection
         matrix. The dot product of two sketches is an unbiased estimate of the
-        true gradient dot product (what attribution needs)."""
+        true gradient dot product (what attribution needs).
+
+        Dispatches to :meth:`_factored_sketch_grouped` when
+        ``grouped_dispatch=True`` (opt-in; batches modules of identical shape
+        into one einsum/bmm call per shape group instead of one per module —
+        see that method's docstring), else the per-module loop below."""
+        if self.grouped_dispatch:
+            return self._factored_sketch_grouped()
+        return self._factored_sketch_loop()
+
+    def _factored_sketch_loop(self):
+        """Per-module reference implementation of :meth:`_factored_sketch`.
+        One einsum/addmm_ per tracked module per step. Simple and always
+        correct; :meth:`_factored_sketch_grouped` is a batched, opt-in,
+        numerically-equivalent alternative for reducing kernel-launch count
+        when many modules share a shape (the common LoRA case)."""
         import torch
 
         parts = []
@@ -287,6 +318,145 @@ class LoRAGradientLogger:
         self.sketch_dim = sketch.shape[1]
         return sketch
 
+    def _build_groups(self):
+        """One-time (per logger instance) construction of shape-based groups
+        from the now-fully-populated ``self._fac_PQ``. Called once, after the
+        first step's per-module P/Q have all been created by the loop-path
+        fallback in :meth:`_factored_sketch_grouped` — so group membership is
+        derived from real per-module shapes, not guessed in advance, and any
+        covariance accumulated during that first fallback step is carried
+        forward into the new stacked buffers rather than lost.
+
+        Modules are grouped by ``(d_out, d_in, k_out, k_in)`` (the k's are a
+        deterministic function of d_out/d_in and kfac, included in the key
+        only for clarity). Within a group, modules keep their original
+        ``self._names`` relative order, so ``kfac_covariances()`` and the
+        final sketch concatenation can always recover the exact per-module
+        layout the ungrouped loop path would have produced.
+        """
+        import torch
+
+        groups: dict = {}
+        for name in self._names:
+            if name not in self._fac_PQ:
+                continue
+            P, Q = self._fac_PQ[name]
+            k_out, d_out = P.shape
+            k_in, d_in = Q.shape
+            key = (d_out, d_in, k_out, k_in)
+            groups.setdefault(key, []).append(name)
+        self._fac_groups = groups
+
+        for key, names in groups.items():
+            k_out, d_out, k_in, d_in = key[2], key[0], key[3], key[1]
+            Ps = torch.stack([self._fac_PQ[n][0] for n in names], dim=0)  # (M,k_out,d_out)
+            Qs = torch.stack([self._fac_PQ[n][1] for n in names], dim=0)  # (M,k_in,d_in)
+            self._fac_P_stack[key] = Ps
+            self._fac_Q_stack[key] = Qs
+            if self.inline_precond:
+                device = Ps.device
+                cov_G0 = torch.stack(
+                    [self._cov_G.get(n, torch.zeros(k_out, k_out, device=device,
+                                                      dtype=torch.float32))
+                     for n in names], dim=0)
+                cov_A0 = torch.stack(
+                    [self._cov_A.get(n, torch.zeros(k_in, k_in, device=device,
+                                                      dtype=torch.float32))
+                     for n in names], dim=0)
+                self._cov_G_stack[key] = cov_G0
+                self._cov_A_stack[key] = cov_A0
+        self._fac_groups_built = True
+
+    def _factored_sketch_grouped(self):
+        """Batched variant of :meth:`_factored_sketch_loop`: modules sharing
+        an identical ``(d_out, d_in)`` shape — the common case for LoRA,
+        where e.g. every ``lora_A`` across transformer layers has the same
+        shape and every ``lora_B`` has another — are projected and
+        covariance-accumulated with ONE batched einsum/bmm call per shape
+        group instead of one per module, cutting kernel-launch count roughly
+        by the group size. Batching over an independent module axis does not
+        change any individual module's arithmetic (same per-module P/Q, same
+        per-module sums over tokens), only how many kernel launches it costs
+        — see ``tests/unit/test_lora_logging.py::test_grouped_dispatch_matches_loop``
+        for the numerical-equivalence check this claim rests on.
+
+        Falls back to the exact per-module loop on the first step, while
+        per-module P/Q are still being lazily created and group membership is
+        not yet known; the resulting per-module covariance from that
+        fallback step is carried forward into the stacked buffers
+        (:meth:`_build_groups`), not discarded. Group membership is then
+        assumed fixed for the life of the logger — every tracked module must
+        fire every step after that, matching how LoRA hooks actually behave
+        in practice; a step where that assumption is violated raises rather
+        than silently producing a mismatched layout.
+        """
+        import torch
+
+        present = {name for name in self._names
+                   if name in self._fwd_input and name in self._grad_output}
+        if not present:
+            return None
+
+        if not self._fac_groups_built:
+            sketch = self._factored_sketch_loop()
+            if set(self._fac_PQ) >= present:
+                self._build_groups()
+            return sketch
+
+        known = {n for names in self._fac_groups.values() for n in names}
+        if present != known:
+            raise RuntimeError(
+                "grouped_dispatch=True requires the same set of tracked modules "
+                "to fire every step after the first (group membership is fixed "
+                f"once built); got {sorted(present)}, expected {sorted(known)}."
+            )
+
+        grad_dim_total = 0
+        parts_by_name: dict = {}
+        for key, names in self._fac_groups.items():
+            d_out, d_in, k_out, k_in = key
+            grad_dim_total += d_out * d_in * len(names)
+            a_list, g_list = [], []
+            for n in names:
+                a = self._fwd_input[n]
+                g = self._grad_output[n]
+                if a.dim() == 2:
+                    a = a.unsqueeze(1)
+                    g = g.unsqueeze(1)
+                a_list.append(a)
+                g_list.append(g)
+            a_stack = torch.stack(a_list, dim=0)  # (M,B,T,d_in)
+            g_stack = torch.stack(g_list, dim=0)  # (M,B,T,d_out)
+            P_stack = self._fac_P_stack[key]      # (M,k_out,d_out)
+            Q_stack = self._fac_Q_stack[key]      # (M,k_in,d_in)
+            with torch.no_grad():
+                Pg = torch.einsum("mbto,mko->mbtk", g_stack.float(), P_stack)  # (M,B,T,k_out)
+                Qa = torch.einsum("mbti,mli->mbtl", a_stack.float(), Q_stack)  # (M,B,T,k_in)
+                S = torch.einsum("mbtk,mbtl->mbkl", Pg, Qa)                     # (M,B,k_out,k_in)
+                if self.inline_precond:
+                    M, B, T, _ = Pg.shape
+                    pg2 = Pg.reshape(M, B * T, k_out)
+                    qa2 = Qa.reshape(M, B * T, k_in)
+                    self._cov_G_stack[key] += torch.bmm(pg2.transpose(1, 2), pg2)
+                    self._cov_A_stack[key] += torch.bmm(qa2.transpose(1, 2), qa2)
+            for i, name in enumerate(names):
+                parts_by_name[name] = S[i].reshape(S.shape[1], -1)
+
+        self.grad_dim = grad_dim_total
+        parts = [parts_by_name[n] for n in self._names if n in parts_by_name]
+        layout = []
+        for key, names in self._fac_groups.items():
+            for n in names:
+                if n in parts_by_name:
+                    layout.append((n, int(key[2]), int(key[3])))
+        # layout must follow self._names order, not group order, to match parts
+        layout_by_name = {n: (n, ko, ki) for n, ko, ki in layout}
+        layout = [layout_by_name[n] for n in self._names if n in parts_by_name]
+        self._fac_layout = layout
+        sketch = torch.cat(parts, dim=1)
+        self.sketch_dim = sketch.shape[1]
+        return sketch
+
     def kfac_covariances(self):
         """Inline-accumulated K-FAC covariance of the projected factors.
 
@@ -297,8 +467,20 @@ class LoRAGradientLogger:
         / ``Sum Qa Qa^T`` accumulated over the logging pass (numpy, float64).
 
         Only populated when the logger was built with ``inline_precond=True``.
-        Feed straight into :func:`apply_kfac_precondition`."""
+        Feed straight into :func:`apply_kfac_precondition`.
+
+        When ``grouped_dispatch=True`` and groups have been built, this reads
+        the per-module slices straight out of the stacked accumulators
+        (``self._cov_G_stack`` / ``self._cov_A_stack``) rather than
+        ``self._cov_G`` / ``self._cov_A``, which stop being updated once
+        grouped accumulation takes over (see :meth:`_factored_sketch_grouped`)."""
         import numpy as np
+
+        if self.grouped_dispatch and self._fac_groups_built:
+            for key, names in self._fac_groups.items():
+                for i, name in enumerate(names):
+                    self._cov_G[name] = self._cov_G_stack[key][i]
+                    self._cov_A[name] = self._cov_A_stack[key][i]
 
         cov_G = {k: v.detach().cpu().numpy().astype(np.float64)
                  for k, v in self._cov_G.items()}

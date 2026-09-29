@@ -264,3 +264,88 @@ def test_permodule_precondition_matches_logix_original():
         orig = logix_orig({name: src[name]}, state, damping=abs_d)
         assert torch.allclose(mine[name]["grad"], orig[name]["grad"], atol=1e-6), \
             f"per-module patch diverges from logix original on {name}"
+
+
+# --- Grouped batched dispatch -----------------------------------------------
+# The 7B overhead investigation (see docs/mlsys/main.tex Appendix "7B Overhead
+# Investigation Detail") found flush_step CPU-bound at scale (many small
+# per-module einsum/copy/cat calls). grouped_dispatch=True batches modules
+# sharing an identical (d_out, d_in) shape -- e.g. every lora_A across
+# transformer layers -- into one einsum/bmm call per shape group. Batching
+# over an independent module axis must not change any individual module's
+# arithmetic, only how many kernel launches it costs; this test is the
+# numerical-equivalence check that claim rests on, run against ToyNet (whose
+# l1.lora_A and l2.lora_A share shape (32,4), giving a real group of size 2,
+# not just size-1 groups that would trivially pass).
+
+def test_grouped_dispatch_matches_loop():
+    torch.manual_seed(5)
+    B, T, kfac = 4, 6, 4
+    batches = [torch.randint(0, 50, (B, T)) for _ in range(4)]
+    targets_names = None
+
+    def run(grouped):
+        torch.manual_seed(0)  # same model init for both runs
+        model = ToyNet()
+        targets = select_lora_linears(model, ("lora_A", "lora_B"))
+        store = GradientStore(proj_dim=8)
+        lg = LoRAGradientLogger(store, targets, proj_dim=8, factored=True,
+                                kfac=kfac, inline_precond=True,
+                                grouped_dispatch=grouped)
+        sketches = []
+        for xb in batches:
+            model.zero_grad(set_to_none=True)
+            F.cross_entropy(model(xb).reshape(-1, 50), xb.reshape(-1),
+                            reduction="sum").backward()
+            proj = lg._factored_sketch()
+            sketches.append(proj.clone())
+        layout, cov_G, cov_A = lg.kfac_covariances()
+        lg.detach()
+        return sketches, dict(layout=[(n, ko, ki) for n, ko, ki in layout]), cov_G, cov_A
+
+    loop_sketches, loop_meta, loop_cov_G, loop_cov_A = run(grouped=False)
+    grp_sketches, grp_meta, grp_cov_G, grp_cov_A = run(grouped=True)
+
+    # a real group of size > 1 must actually have formed (l1.lora_A / l2.lora_A
+    # share shape (in=32, out=4)) -- otherwise this test would trivially pass
+    # without exercising the batched path at all.
+    assert loop_meta["layout"] == grp_meta["layout"], "layout order must match exactly"
+
+    for s_loop, s_grp in zip(loop_sketches, grp_sketches):
+        assert torch.allclose(s_loop, s_grp, atol=1e-6, rtol=1e-6), \
+            f"sketch mismatch: max abs diff {(s_loop - s_grp).abs().max()}"
+
+    assert set(loop_cov_G) == set(grp_cov_G)
+    for name in loop_cov_G:
+        assert np.allclose(loop_cov_G[name], grp_cov_G[name], atol=1e-6, rtol=1e-6), \
+            f"cov_G[{name}] mismatch: max abs diff " \
+            f"{np.abs(loop_cov_G[name] - grp_cov_G[name]).max()}"
+        assert np.allclose(loop_cov_A[name], grp_cov_A[name], atol=1e-6, rtol=1e-6), \
+            f"cov_A[{name}] mismatch: max abs diff " \
+            f"{np.abs(loop_cov_A[name] - grp_cov_A[name]).max()}"
+
+
+def test_grouped_dispatch_forms_a_real_multi_module_group():
+    """Guard against the equivalence test above passing vacuously (all groups
+    size 1, batched path never actually exercised). ToyNet's l1.lora_A and
+    l2.lora_A both have shape (in_features=32, r=4), so they must land in the
+    same group once grouped_dispatch builds its shape map."""
+    torch.manual_seed(0)
+    model = ToyNet()
+    targets = select_lora_linears(model, ("lora_A", "lora_B"))
+    store = GradientStore(proj_dim=8)
+    lg = LoRAGradientLogger(store, targets, proj_dim=8, factored=True,
+                            kfac=4, inline_precond=True, grouped_dispatch=True)
+    for _ in range(2):  # first step builds groups from the fallback loop path
+        xb = torch.randint(0, 50, (4, 6))
+        model.zero_grad(set_to_none=True)
+        F.cross_entropy(model(xb).reshape(-1, 50), xb.reshape(-1),
+                        reduction="sum").backward()
+        lg._factored_sketch()
+    lg.detach()
+    assert lg._fac_groups_built
+    group_sizes = sorted(len(v) for v in lg._fac_groups.values())
+    assert max(group_sizes) >= 2, (
+        f"expected at least one shape group with >1 module (l1.lora_A/l2.lora_A "
+        f"share shape), got group sizes {group_sizes} -- the equivalence test "
+        f"would be vacuous if this fails")
