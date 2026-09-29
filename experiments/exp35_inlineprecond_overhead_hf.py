@@ -86,7 +86,20 @@ def mwu_one_sided_greater(a, b):
         return float("nan")
 
 
-def logix_arm(model_name, rank, kfac, track, batches, device):
+def plain_fwd_bwd(model, batches, device):
+    """Sanity reference: one fwd+bwd pass over the batches, NO LogIX, NO opt.step.
+    The LogIX covariance pass should be close to this; a covariance pass many times
+    a plain fwd+bwd would signal a misconfiguration (e.g. full-dim covariance)."""
+    _sync(device); t0 = time.perf_counter()
+    for xb, yb in batches:
+        model.zero_grad(set_to_none=True)
+        out = model(xb); logits = out if not hasattr(out, "logits") else out.logits
+        F.cross_entropy(logits, yb, reduction="sum").backward()
+    _sync(device)
+    return time.perf_counter() - t0
+
+
+def logix_arm(model_name, rank, kfac, track, batches, device, init_strategy="pca"):
     """Time LogIX FAIRLY: its per-example gradient logging runs INLINE in a real
     training loop (with opt.step, exactly like Traceprop and like exp31's ~3.2%),
     NOT as a separate pass -- so we don't inflate its cost. Only the covariance
@@ -95,10 +108,24 @@ def logix_arm(model_name, rank, kfac, track, batches, device):
     watched model, training WITH inline logging, and the separate covariance pass.
     """
     import logix
-    from logix_strict import install_strict_warnings, patch_loralinear_weight_proxy
+    from logix_strict import (install_strict_warnings, patch_loralinear_weight_proxy,
+                              assert_pca_init_took_effect)
     install_strict_warnings(); patch_loralinear_weight_proxy()
 
-    lx = build(model_name, rank, device)   # same PEFT model / tracked LoRA linears as Traceprop
+    # VETTED exp31 LogIX setup: watch + restore_trainable (watch() freezes all
+    # non-tracked params, which silently makes the LogIX model train less than the
+    # plain baseline -> the exp31 negative-overhead bug); PCA covariance pass;
+    # add_lora() for storage-matched rank compression; restore_trainable AGAIN
+    # (add_lora calls watch() internally, re-freezing). ALL setup is outside the
+    # timed regions -- only the data-pass loops are timed.
+    lx = build(model_name, rank, device)
+    trainable = [p for p in lx.parameters() if p.requires_grad]
+    trainable_ids = {id(p) for p in trainable}
+    def restore_trainable():
+        for p in lx.parameters():
+            if id(p) in trainable_ids:
+                p.requires_grad = True
+
     tracked = [n for n, m in lx.named_modules()
                if isinstance(m, nn.Linear) and ("lora_A" in n or "lora_B" in n)]
     if track > 0:
@@ -111,50 +138,52 @@ def logix_arm(model_name, rank, kfac, track, batches, device):
         tracked = [n for n in tracked if bidx(n) in keep]
 
     run_ = logix.LogIX(project=f"ovh_{os.getpid()}", config="exp31_config.yaml")
+    run_.config.lora.init = init_strategy
     run_.watch(lx, name_filter=tracked, type_filter=[nn.Linear])
-    trainable = [p for p in lx.parameters() if p.requires_grad]
+    restore_trainable()
 
     ids = {"n": 0}
     def dids(bs):
         out = [str(ids["n"] + i) for i in range(bs)]; ids["n"] += bs; return out
 
-    def train_loop(log_active):
-        """One training pass (fwd/bwd/opt.step). log_active -> LogIX logs inline."""
-        opt = torch.optim.Adam(trainable, lr=1e-4)
-        if log_active:
-            run_.setup({"grad": ["log"]}); run_.save(True)
+    def fwd_bwd_pass():
+        """One fwd+bwd pass over the batches (no opt.step). Timed region only."""
         _sync(device); t0 = time.perf_counter()
         for xb, yb in batches:
             ids["n"] = 0
-            opt.zero_grad(set_to_none=True)
-            if log_active:
-                with run_(data_id=dids(len(xb))):
-                    out = lx(xb); logits = out if not hasattr(out, "logits") else out.logits
-                    F.cross_entropy(logits, yb, reduction="sum").backward()
-            else:
+            lx.zero_grad(set_to_none=True)
+            with run_(data_id=dids(len(xb))):
                 out = lx(xb); logits = out if not hasattr(out, "logits") else out.logits
                 F.cross_entropy(logits, yb, reduction="sum").backward()
-            opt.step()
-        if log_active:
-            run_.finalize()
         _sync(device)
         return time.perf_counter() - t0
 
-    none_s = train_loop(False)   # baseline on the watched model, logging OFF
-    log_s = train_loop(True)     # same loop, LogIX logging ON (inline, like Traceprop)
-
-    # covariance pass -- the ONLY genuinely extra pass LogIX needs (for K-FAC precond)
+    # --- covariance pass (PCA init needs it BEFORE add_lora); timed, setup excluded
     run_.setup({"forward": ["covariance"], "backward": ["covariance"]})
+    cov_s = fwd_bwd_pass()
+    run_.finalize()
+
+    # --- add_lora (storage-matched rank compression) + restore ---
+    run_.add_lora()
+    restore_trainable()
+    assert_pca_init_took_effect(run_, init_strategy)
+
+    # --- inline logging pass (add_lora'd model + grad log), timed, setup excluded
+    run_.setup({"grad": ["log"]})
+    run_.save(True)
+    opt = torch.optim.Adam([p for p in lx.parameters() if p.requires_grad], lr=1e-4)
     _sync(device); t0 = time.perf_counter()
     for xb, yb in batches:
         ids["n"] = 0
+        opt.zero_grad(set_to_none=True)
         with run_(data_id=dids(len(xb))):
-            lx.zero_grad(set_to_none=True)
             out = lx(xb); logits = out if not hasattr(out, "logits") else out.logits
             F.cross_entropy(logits, yb, reduction="sum").backward()
+        opt.step()
+    run_.finalize()
     _sync(device)
-    cov_s = time.perf_counter() - t0
-    return {"logix_none_s": none_s, "logix_log_s": log_s, "logix_cov_s": cov_s}
+    log_s = time.perf_counter() - t0
+    return {"logix_log_s": log_s, "logix_cov_s": cov_s}
 
 
 def main():
@@ -212,32 +241,39 @@ def main():
     }
 
     if args.with_logix:
-        lg_none, lg_log, lg_cov = [], [], []
+        # sanity reference: plain fwd+bwd (no LogIX) on the SAME batches/model class.
+        pfb_model = build(args.model, args.rank, device)
+        plain_fwdbwd = np.median([plain_fwd_bwd(pfb_model, batches, device)
+                                  for _ in range(max(3, args.repeats // 3))])
+        lg_log, lg_cov = [], []
         for r in range(max(3, args.repeats // 3) + 1):
             d = logix_arm(args.model, args.rank, args.kfac, args.track, batches, device)
             if r == 0:
                 continue
-            lg_none.append(d["logix_none_s"]); lg_log.append(d["logix_log_s"]); lg_cov.append(d["logix_cov_s"])
-            print(f"  logix r{r}: none={d['logix_none_s']:.3f} log_inline={d['logix_log_s']:.3f} "
-                  f"cov_pass={d['logix_cov_s']:.3f}")
-        lg_none, lg_log, lg_cov = np.array(lg_none), np.array(lg_log), np.array(lg_cov)
-        # FAIR accounting: LogIX logging runs INLINE during training (like Traceprop and
-        # like exp31's ~3.2%), so its overhead is (log - none)/none, NOT a full extra pass.
-        # ONLY the covariance pass is genuinely extra work.
-        inline_pct = float(np.median((lg_log - lg_none) / lg_none) * 100)
-        cov_pass_pct = float(np.median(lg_cov / lg_none) * 100)
+            lg_log.append(d["logix_log_s"]); lg_cov.append(d["logix_cov_s"])
+            print(f"  logix r{r}: log_inline={d['logix_log_s']:.3f} cov_pass={d['logix_cov_s']:.3f}")
+        lg_log, lg_cov = np.array(lg_log), np.array(lg_cov)
+        # baseline = the SAME plain-training median used for Traceprop (res none), so both
+        # methods' overhead is expressed against identical plain training.
+        plain_train = res["none_s_median"]
+        inline_pct = float((np.median(lg_log) - plain_train) / plain_train * 100)
+        cov_pass_pct = float(np.median(lg_cov) / plain_train * 100)
+        cov_over_fwdbwd = float(np.median(lg_cov) / plain_fwdbwd)  # sanity: should be ~1
         res["logix"] = {
-            "logix_none_s_median": round(float(np.median(lg_none)), 4),
+            "plain_train_s_median": round(plain_train, 4),
+            "plain_fwd_bwd_s_median": round(float(plain_fwdbwd), 4),
             "logix_log_s_median": round(float(np.median(lg_log)), 4),
             "logix_cov_pass_s_median": round(float(np.median(lg_cov)), 4),
             "logix_inline_logging_pct": round(inline_pct, 3),
             "logix_covariance_pass_pct_of_training": round(cov_pass_pct, 3),
             "logix_total_attribution_pct": round(inline_pct + cov_pass_pct, 3),
-            "note": "FAIR: LogIX logging is measured INLINE in the training loop "
-                    "(logix_inline_logging_pct, comparable to exp31 ~3.2%); only the covariance "
-                    "pass is extra (logix_covariance_pass_pct_of_training). LogIX total attribution "
-                    f"= sum of the two. Traceprop total is +{res['total_overhead_pct']}% in ONE "
-                    "pass (no separate covariance pass).",
+            "cov_pass_over_plain_fwd_bwd": round(cov_over_fwdbwd, 3),
+            "note": "VETTED exp31 setup (add_lora + watch/restore, storage-matched). Inline "
+                    "logging overhead = (logix_log - plain_train)/plain_train (same plain baseline "
+                    "as Traceprop). LogIX total attribution = inline logging + separate covariance "
+                    "pass. SANITY: cov_pass_over_plain_fwd_bwd should be ~1; >>1 means the covariance "
+                    "pass is misconfigured (e.g. full-dim covariance). Setup (build/watch/add_lora/ "
+                    "LogIX init) is EXCLUDED from all timed regions.",
         }
 
     print(json.dumps(res, indent=2))
@@ -248,7 +284,8 @@ def main():
         lx = res["logix"]
         print(f"[overhead-hf] LogIX total attribution +{lx['logix_total_attribution_pct']}% "
               f"= inline logging +{lx['logix_inline_logging_pct']}% + covariance pass "
-              f"+{lx['logix_covariance_pass_pct_of_training']}% (of a training pass)  "
+              f"+{lx['logix_covariance_pass_pct_of_training']}%  "
+              f"[SANITY cov_pass/plain_fwd_bwd = {lx['cov_pass_over_plain_fwd_bwd']}x, want ~1]  "
               f"vs Traceprop +{res['total_overhead_pct']}% single pass")
     os.makedirs("results", exist_ok=True)
     with open(args.out, "w") as f:
