@@ -1,0 +1,28 @@
+{
+  "base": "exp35_tiny_track0_fairpmv3",
+  "kfac": 7,
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "n_boot": 2000,
+  "per_seed_point_diff": {
+    "0": 0.0173,
+    "1": 0.0106,
+    "2": 0.0053,
+    "3": 0.0056,
+    "4": 0.0056
+  },
+  "pooled_point_diff": 0.0089,
+  "pooled_ci95": [
+    0.0032,
+    0.015
+  ],
+  "frac_boot_gt_0": 1.0,
+  "pooled_ci_clearly_positive": true,
+  "verdict": "small but consistent improvement",
+  "method": "hierarchical bootstrap: resample seeds, then subsets + eval examples within seed"
+}

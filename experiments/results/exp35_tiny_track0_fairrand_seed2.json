@@ -1,0 +1,350 @@
+{
+  "backend": "tiny",
+  "model": "tiny-clf",
+  "device": "cpu",
+  "lora_init": "random",
+  "lora_init_effective": "random",
+  "n_train": 400,
+  "n_test": 100,
+  "n_subsets": 200,
+  "subset_frac": 0.5,
+  "epochs": 3,
+  "noise_ceiling": null,
+  "proj_dim": 512,
+  "track_last_n_blocks": 0,
+  "target_test_acc": 0.59,
+  "storage_matching": {
+    "logix_bytes_per_example_measured": 6160.0,
+    "traceprop_proj_dim_default": 512,
+    "traceprop_proj_dim_matched": 1540,
+    "traceprop_factored_kfac_bracket": {
+      "7": {
+        "kfac": 7,
+        "dtype": "fp32",
+        "bytes_achieved": 4900,
+        "rel_error_vs_logix": -0.2045,
+        "direction": "less_storage_than_logix"
+      },
+      "8": {
+        "kfac": 8,
+        "dtype": "fp32",
+        "bytes_achieved": 6400,
+        "rel_error_vs_logix": 0.039,
+        "direction": "more_storage_than_logix"
+      }
+    },
+    "note": "LogIX runs at its own natural settings (no rank override); logix_bytes_per_example_measured is the REAL on-disk serialized size from the actual train logging pass, not an analytical estimate. traceprop_dot/traceprop_trak use proj_dim (the default reference, 512 floats/2KB elsewhere in the paper); traceprop_dot_matched/traceprop_trak_matched use traceprop_proj_dim_matched, grown or shrunk to LogIX's own measured footprint for a genuine storage-matched comparison. traceprop_factored_* (if --factored was passed) brackets BOTH achievable integer kfac values around LogIX's measured footprint -- an exact byte match only happens when bytes/4/n_tracked_layers is a perfect square, which is not guaranteed on this backend; see traceprop_factored_kfac_bracket for the signed relative error of each. Neither direction is inherently 'conservative' for Traceprop -- less storage is the stronger claim if quality still holds, more storage is the weaker one."
+  },
+  "logix_preconditioned_note": "computed",
+  "gradient_validation": {
+    "n_checks": 100,
+    "worst_cosine": 0.9999997847061459,
+    "scale_ratio_mean": 2.000000021810749,
+    "scale_ratio_min": 1.9999998281331288,
+    "scale_ratio_max": 2.000000288858928,
+    "scale_nonuniformity": 1.0000002303629194
+  },
+  "factored_gradient_validation": {
+    "7": {
+      "n_checks": 4,
+      "worst_cosine": 0.9999999081456526,
+      "mean_cosine": 0.9999999818368315
+    },
+    "8": {
+      "n_checks": 4,
+      "worst_cosine": 1.0,
+      "mean_cosine": 1.000000026101112
+    }
+  },
+  "inline_precond_selection": {
+    "7": {
+      "chosen_damping": 1e-06,
+      "chosen_val_lds": 0.6996,
+      "grid_val_lds": {
+        "1e-08": 0.1388,
+        "1e-07": 0.1386,
+        "1e-06": 0.6996,
+        "1e-05": 0.6994,
+        "0.0001": 0.6992,
+        "0.001": 0.6987,
+        "0.01": 0.6973,
+        "0.1": 0.6882,
+        "1": 0.6586,
+        "10": 0.6359
+      },
+      "n_val": 30,
+      "n_eval": 70,
+      "inline_overhead_pct": 1.256
+    },
+    "8": {
+      "chosen_damping": 1e-06,
+      "chosen_val_lds": 0.7012,
+      "grid_val_lds": {
+        "1e-08": 0.2036,
+        "1e-07": 0.2281,
+        "1e-06": 0.7012,
+        "1e-05": 0.701,
+        "0.0001": 0.701,
+        "0.001": 0.7009,
+        "0.01": 0.7005,
+        "0.1": 0.6929,
+        "1": 0.6626,
+        "10": 0.6381
+      },
+      "n_val": 30,
+      "n_eval": 70,
+      "inline_overhead_pct": 10.922
+    }
+  },
+  "logix_tuned_selection": {
+    "global_mean_kfac_eigval": 3.93653562680979e-09,
+    "logix_default_damping_rule": "0.1 * mean(kfac_eigval) per module (relative 0.1)",
+    "logix_default_damping_abs_nominal": 3.93653562680979e-10,
+    "damping_granularity": "per_module_relative",
+    "kfac_space": "logix add_lora rank-8 projected (eigval per factor ~rank-sized), NOT full d x d -- confirmed via cov shape probe",
+    "default_damping_bug": {
+      "logix_default_differs_from_correct_permodule_0.1": true,
+      "max_abs_diff": 3367458.0,
+      "interpretation": "if True, LogIX's damping=None default leaks module-0's absolute damping to all later modules (a real LogIX bug)."
+    },
+    "note": "LogIX preconditions in its own add_lora-projected rank space. per_module_relative: damping = lambda_rel * that module's mean eigval (matches Traceprop). global_absolute: lambda_rel * global mean eigval.",
+    "chosen_lambda_rel": 0.001,
+    "chosen_damping_abs": 3.93653562680979e-12,
+    "chosen_val_lds": 0.69,
+    "grid_val_lds": {
+      "1e-08": 0.6785,
+      "1e-07": 0.6888,
+      "1e-06": 0.6886,
+      "1e-05": 0.6889,
+      "0.0001": 0.6891,
+      "0.001": 0.69,
+      "0.01": 0.6899,
+      "0.1": 0.6861,
+      "1": 0.6767,
+      "10": 0.6567
+    }
+  },
+  "precond_val_eval_split": {
+    "val_idx": [
+      1,
+      3,
+      14,
+      15,
+      17,
+      22,
+      23,
+      27,
+      29,
+      35,
+      36,
+      52,
+      54,
+      57,
+      59,
+      60,
+      65,
+      66,
+      69,
+      71,
+      72,
+      74,
+      75,
+      76,
+      81,
+      90,
+      91,
+      92,
+      93,
+      96
+    ],
+    "eval_idx": [
+      0,
+      2,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      16,
+      18,
+      19,
+      20,
+      21,
+      24,
+      25,
+      26,
+      28,
+      30,
+      31,
+      32,
+      33,
+      34,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      53,
+      55,
+      56,
+      58,
+      61,
+      62,
+      63,
+      64,
+      67,
+      68,
+      70,
+      73,
+      77,
+      78,
+      79,
+      80,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      94,
+      95,
+      97,
+      98,
+      99
+    ],
+    "note": "inline-precond damping is chosen on val_idx only; lds_heldout_eval is reported on eval_idx (disjoint) so there is no tuning leakage. Downstream two-way bootstrap must restrict to eval_idx."
+  },
+  "lds": {
+    "traceprop_dot": {
+      "mean": 0.6547,
+      "std": 0.0322
+    },
+    "traceprop_trak": {
+      "mean": 0.3169,
+      "std": 0.0864
+    },
+    "traceprop_dot_matched": {
+      "mean": 0.6529,
+      "std": 0.0322
+    },
+    "traceprop_trak_matched": {
+      "mean": 0.2702,
+      "std": 0.0804
+    },
+    "logix_dot": {
+      "mean": 0.6522,
+      "std": 0.0322
+    },
+    "logix_preconditioned": {
+      "mean": 0.6868,
+      "std": 0.0368
+    },
+    "logix_preconditioned_tuned": {
+      "mean": 0.6961,
+      "std": 0.0367
+    },
+    "traceprop_factored_kfac7_dot": {
+      "mean": 0.6279,
+      "std": 0.0379
+    },
+    "traceprop_factored_kfac7_trak": {
+      "mean": 0.343,
+      "std": 0.0827
+    },
+    "traceprop_factored_kfac7_inlineprecond": {
+      "mean": 0.6993,
+      "std": 0.0336
+    },
+    "traceprop_factored_kfac8_dot": {
+      "mean": 0.6239,
+      "std": 0.0379
+    },
+    "traceprop_factored_kfac8_trak": {
+      "mean": 0.3265,
+      "std": 0.0821
+    },
+    "traceprop_factored_kfac8_inlineprecond": {
+      "mean": 0.7023,
+      "std": 0.0333
+    },
+    "random": {
+      "mean": -0.0067,
+      "std": 0.0845
+    }
+  },
+  "lds_heldout_eval": {
+    "traceprop_dot": {
+      "mean": 0.6564,
+      "std": 0.0296
+    },
+    "traceprop_trak": {
+      "mean": 0.3189,
+      "std": 0.0887
+    },
+    "traceprop_dot_matched": {
+      "mean": 0.6547,
+      "std": 0.0292
+    },
+    "traceprop_trak_matched": {
+      "mean": 0.2755,
+      "std": 0.0822
+    },
+    "logix_dot": {
+      "mean": 0.6525,
+      "std": 0.0302
+    },
+    "logix_preconditioned": {
+      "mean": 0.6905,
+      "std": 0.0363
+    },
+    "logix_preconditioned_tuned": {
+      "mean": 0.6988,
+      "std": 0.0359
+    },
+    "traceprop_factored_kfac7_dot": {
+      "mean": 0.6306,
+      "std": 0.035
+    },
+    "traceprop_factored_kfac7_trak": {
+      "mean": 0.336,
+      "std": 0.0783
+    },
+    "traceprop_factored_kfac7_inlineprecond": {
+      "mean": 0.6992,
+      "std": 0.0335
+    },
+    "traceprop_factored_kfac8_dot": {
+      "mean": 0.6267,
+      "std": 0.0347
+    },
+    "traceprop_factored_kfac8_trak": {
+      "mean": 0.3213,
+      "std": 0.0791
+    },
+    "traceprop_factored_kfac8_inlineprecond": {
+      "mean": 0.7028,
+      "std": 0.0331
+    },
+    "random": {
+      "mean": -0.0052,
+      "std": 0.0773
+    }
+  }
+}

@@ -1,0 +1,189 @@
+{
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "kfac": 8,
+  "per_seed": {
+    "0": {
+      "heldout_eval_lds": {
+        "inline_precond": 0.6814,
+        "logix_preconditioned_tuned": 0.6616,
+        "logix_preconditioned_default": 0.6312,
+        "logix_dot": 0.6187,
+        "factored_dot": 0.6297
+      },
+      "bootstrap_inline_minus_tuned": {
+        "decision_baseline": "logix_preconditioned_tuned",
+        "lds_diff": 0.0197,
+        "ci95": [
+          0.0101,
+          0.0302
+        ],
+        "verdict": "ABOVE"
+      },
+      "inline_chosen_damping": 0.001,
+      "inline_damping_at_grid_edge": false,
+      "inline_val_grid": {
+        "1e-08": 0.1411,
+        "1e-07": 0.1406,
+        "1e-06": 0.6744,
+        "1e-05": 0.6755,
+        "0.0001": 0.6763,
+        "0.001": 0.6769,
+        "0.01": 0.6749,
+        "0.1": 0.6653,
+        "1": 0.6401,
+        "10": 0.6195
+      },
+      "logix_default_damping_abs": 3.50721842430346e-08,
+      "logix_tuned_chosen_lambda_rel": 0.1
+    },
+    "1": {
+      "heldout_eval_lds": {
+        "inline_precond": 0.6535,
+        "logix_preconditioned_tuned": 0.6439,
+        "logix_preconditioned_default": 0.6056,
+        "logix_dot": 0.5939,
+        "factored_dot": 0.6232
+      },
+      "bootstrap_inline_minus_tuned": {
+        "decision_baseline": "logix_preconditioned_tuned",
+        "lds_diff": 0.0096,
+        "ci95": [
+          0.0011,
+          0.0191
+        ],
+        "verdict": "ABOVE"
+      },
+      "inline_chosen_damping": 0.0001,
+      "inline_damping_at_grid_edge": false,
+      "inline_val_grid": {
+        "1e-08": 0.2121,
+        "1e-07": 0.0995,
+        "1e-06": 0.6465,
+        "1e-05": 0.6475,
+        "0.0001": 0.6482,
+        "0.001": 0.6476,
+        "0.01": 0.6454,
+        "0.1": 0.6402,
+        "1": 0.6188,
+        "10": 0.5978
+      },
+      "logix_default_damping_abs": 3.466672341545518e-08,
+      "logix_tuned_chosen_lambda_rel": 0.01
+    },
+    "2": {
+      "heldout_eval_lds": {
+        "inline_precond": 0.7028,
+        "logix_preconditioned_tuned": 0.6939,
+        "logix_preconditioned_default": 0.6495,
+        "logix_dot": 0.6341,
+        "factored_dot": 0.6267
+      },
+      "bootstrap_inline_minus_tuned": {
+        "decision_baseline": "logix_preconditioned_tuned",
+        "lds_diff": 0.0089,
+        "ci95": [
+          0.0006,
+          0.0174
+        ],
+        "verdict": "ABOVE"
+      },
+      "inline_chosen_damping": 1e-06,
+      "inline_damping_at_grid_edge": false,
+      "inline_val_grid": {
+        "1e-08": 0.2036,
+        "1e-07": 0.2281,
+        "1e-06": 0.7012,
+        "1e-05": 0.701,
+        "0.0001": 0.701,
+        "0.001": 0.7009,
+        "0.01": 0.7005,
+        "0.1": 0.6929,
+        "1": 0.6626,
+        "10": 0.6381
+      },
+      "logix_default_damping_abs": 2.4106544090241043e-08,
+      "logix_tuned_chosen_lambda_rel": 0.1
+    },
+    "3": {
+      "heldout_eval_lds": {
+        "inline_precond": 0.6861,
+        "logix_preconditioned_tuned": 0.675,
+        "logix_preconditioned_default": 0.6335,
+        "logix_dot": 0.6094,
+        "factored_dot": 0.6045
+      },
+      "bootstrap_inline_minus_tuned": {
+        "decision_baseline": "logix_preconditioned_tuned",
+        "lds_diff": 0.0111,
+        "ci95": [
+          0.0016,
+          0.0208
+        ],
+        "verdict": "ABOVE"
+      },
+      "inline_chosen_damping": 0.01,
+      "inline_damping_at_grid_edge": false,
+      "inline_val_grid": {
+        "1e-08": 0.2337,
+        "1e-07": 0.1889,
+        "1e-06": 0.6948,
+        "1e-05": 0.6948,
+        "0.0001": 0.6949,
+        "0.001": 0.6956,
+        "0.01": 0.6958,
+        "0.1": 0.6886,
+        "1": 0.6542,
+        "10": 0.627
+      },
+      "logix_default_damping_abs": 3.2006420089381045e-08,
+      "logix_tuned_chosen_lambda_rel": 0.1
+    },
+    "4": {
+      "heldout_eval_lds": {
+        "inline_precond": 0.4822,
+        "logix_preconditioned_tuned": 0.4717,
+        "logix_preconditioned_default": 0.4427,
+        "logix_dot": 0.4372,
+        "factored_dot": 0.4451
+      },
+      "bootstrap_inline_minus_tuned": {
+        "decision_baseline": "logix_preconditioned_tuned",
+        "lds_diff": 0.0106,
+        "ci95": [
+          0.001,
+          0.0207
+        ],
+        "verdict": "ABOVE"
+      },
+      "inline_chosen_damping": 0.001,
+      "inline_damping_at_grid_edge": false,
+      "inline_val_grid": {
+        "1e-08": 0.0691,
+        "1e-07": 0.069,
+        "1e-06": 0.4766,
+        "1e-05": 0.4775,
+        "0.0001": 0.4788,
+        "0.001": 0.4796,
+        "0.01": 0.4778,
+        "0.1": 0.4685,
+        "1": 0.4454,
+        "10": 0.429
+      },
+      "logix_default_damping_abs": 5.47454631210087e-08,
+      "logix_tuned_chosen_lambda_rel": 0.1
+    }
+  },
+  "votes": {
+    "above": 5,
+    "overlap": 0,
+    "below": 0
+  },
+  "any_seed_at_grid_edge": false,
+  "final_decision": "OUTPERFORMS: inline-precond CI > 0 on 5/5 seeds (majority) vs LogIX TUNED -> claim 'outperforms LogIX's best preconditioning'."
+}

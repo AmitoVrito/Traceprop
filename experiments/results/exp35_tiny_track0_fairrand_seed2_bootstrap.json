@@ -1,0 +1,68 @@
+{
+  "npz": "exp35_tiny_track0_fairrand_seed2_raw.npz",
+  "n_boot": 2000,
+  "n_eval": 70,
+  "n_val": 30,
+  "n_subsets": 200,
+  "comparisons": {
+    "kfac7: inlineprecond - logix_preconditioned_tuned": {
+      "lds_diff": 0.0004,
+      "ci95": [
+        -0.009,
+        0.0098
+      ],
+      "frac_resamples_ge_0": 0.55,
+      "ties_or_beats": true
+    },
+    "kfac7: inlineprecond - logix_preconditioned": {
+      "lds_diff": 0.0087,
+      "ci95": [
+        -0.0013,
+        0.0192
+      ],
+      "frac_resamples_ge_0": 0.956,
+      "ties_or_beats": true
+    },
+    "kfac7: inlineprecond - logix_dot": {
+      "lds_diff": 0.0467,
+      "ci95": [
+        0.0285,
+        0.066
+      ],
+      "frac_resamples_ge_0": 1.0,
+      "ties_or_beats": true
+    },
+    "kfac8: inlineprecond - logix_preconditioned_tuned": {
+      "lds_diff": 0.004,
+      "ci95": [
+        -0.0048,
+        0.0126
+      ],
+      "frac_resamples_ge_0": 0.822,
+      "ties_or_beats": true
+    },
+    "kfac8: inlineprecond - logix_preconditioned": {
+      "lds_diff": 0.0123,
+      "ci95": [
+        0.0026,
+        0.0223
+      ],
+      "frac_resamples_ge_0": 0.992,
+      "ties_or_beats": true
+    },
+    "kfac8: inlineprecond - logix_dot": {
+      "lds_diff": 0.0503,
+      "ci95": [
+        0.0316,
+        0.07
+      ],
+      "frac_resamples_ge_0": 1.0,
+      "ties_or_beats": true
+    }
+  },
+  "decision": {
+    "kfac7": "OVERLAPS_ZERO: inline matches logix_preconditioned_tuned this seed (CI includes 0)",
+    "kfac8": "OVERLAPS_ZERO: inline matches logix_preconditioned_tuned this seed (CI includes 0)"
+  },
+  "decision_baseline": "logix_preconditioned_tuned"
+}
