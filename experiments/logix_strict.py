@@ -27,10 +27,49 @@ from __future__ import annotations
 import warnings
 
 _PATCHED = False
+_BF16_PATCHED = False
 _FAN_IN_FAN_OUT_MSG = (
     r"^fan_in_fan_out is set to False but the target module is `Conv1D`\. "
     r"Setting fan_in_fan_out to True\.$"
 )
+
+
+def patch_to_numpy_bf16():
+    """LogIX's own logix.utils.to_numpy() does `tensor.cpu().detach().numpy()`
+    unconditionally, which raises `TypeError: Got unsupported ScalarType
+    BFloat16` -- NumPy has no native bf16 type, so PyTorch's .numpy() refuses
+    on a bf16 tensor. Only surfaces when the watched model runs in bf16 (e.g.
+    --dtype bf16/auto for large models that don't fit fp32); fp32/fp16 both
+    convert fine, which is why this was never hit before. Upcast to fp32
+    before the numpy conversion -- the value being logged is a small,
+    already-projected sketch, not the full gradient, so this is a negligible
+    cost, not a shortcut that changes what's being measured.
+
+    logix.logging.log_saver does `from logix.utils import to_numpy`, a direct
+    name import that copies the reference into its own module namespace at
+    import time -- patching logix.utils.to_numpy alone does NOT affect that
+    already-bound reference, so both call sites are patched explicitly.
+    Idempotent -- safe to call multiple times."""
+    global _BF16_PATCHED
+    if _BF16_PATCHED:
+        return
+    import numpy as np
+    import torch
+    import logix.utils as _logix_utils
+    import logix.logging.log_saver as _log_saver
+
+    def to_numpy_bf16_safe(tensor):
+        if isinstance(tensor, np.ndarray):
+            return tensor
+        if isinstance(tensor, torch.Tensor):
+            if tensor.dtype == torch.bfloat16:
+                tensor = tensor.float()
+            return tensor.cpu().detach().numpy()
+        raise ValueError("Unsupported tensor type. Supported libraries: NumPy, PyTorch")
+
+    _logix_utils.to_numpy = to_numpy_bf16_safe
+    _log_saver.to_numpy = to_numpy_bf16_safe
+    _BF16_PATCHED = True
 
 
 def patch_loralinear_weight_proxy():

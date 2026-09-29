@@ -135,8 +135,8 @@ def logix_arm(model_name, rank, kfac, track, batches, device, init_strategy="pca
     """
     import logix
     from logix_strict import (install_strict_warnings, patch_loralinear_weight_proxy,
-                              assert_pca_init_took_effect)
-    install_strict_warnings(); patch_loralinear_weight_proxy()
+                              patch_to_numpy_bf16, assert_pca_init_took_effect)
+    install_strict_warnings(); patch_loralinear_weight_proxy(); patch_to_numpy_bf16()
 
     # VETTED exp31 LogIX setup: watch + restore_trainable (watch() freezes all
     # non-tracked params, which silently makes the LogIX model train less than the
@@ -225,8 +225,8 @@ def logix_random_onepass_s(model_name, rank, track, batches, device, dtype=torch
     two-pass exactly (dot corr 1.0); preconditioned scores differ marginally
     (finalize/normalization nuance). Returns the single-pass wall-clock."""
     import logix
-    from logix_strict import install_strict_warnings, patch_loralinear_weight_proxy
-    install_strict_warnings(); patch_loralinear_weight_proxy()
+    from logix_strict import install_strict_warnings, patch_loralinear_weight_proxy, patch_to_numpy_bf16
+    install_strict_warnings(); patch_loralinear_weight_proxy(); patch_to_numpy_bf16()
     lx = build(model_name, rank, device, dtype=dtype)
     trainable_ids = {id(p) for p in lx.parameters() if p.requires_grad}
     def restore():
