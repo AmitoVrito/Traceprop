@@ -186,6 +186,55 @@ def logix_arm(model_name, rank, kfac, track, batches, device, init_strategy="pca
     return {"logix_log_s": log_s, "logix_cov_s": cov_s}
 
 
+def logix_random_onepass_s(model_name, rank, track, batches, device):
+    """LogIX RANDOM-init single pass: covariance + grad logging TOGETHER
+    (setup forward/backward covariance + grad log), post-add_lora. Random init
+    needs no pre-add_lora PCA covariance pass, so this is a genuine single pass.
+    Verified on tiny (exp35_logix_onepass_equiv.py) that one-pass logging matches
+    two-pass exactly (dot corr 1.0); preconditioned scores differ marginally
+    (finalize/normalization nuance). Returns the single-pass wall-clock."""
+    import logix
+    from logix_strict import install_strict_warnings, patch_loralinear_weight_proxy
+    install_strict_warnings(); patch_loralinear_weight_proxy()
+    lx = build(model_name, rank, device)
+    trainable_ids = {id(p) for p in lx.parameters() if p.requires_grad}
+    def restore():
+        for p in lx.parameters():
+            if id(p) in trainable_ids:
+                p.requires_grad = True
+    tracked = [n for n, m in lx.named_modules()
+               if isinstance(m, nn.Linear) and ("lora_A" in n or "lora_B" in n)]
+    if track > 0:
+        import re
+        def bidx(n):
+            m = re.search(r"(?:^|\.)(?:h|layers)\.(\d+)\.", n)
+            return int(m.group(1)) if m else None
+        idxs = sorted({bidx(n) for n in tracked if bidx(n) is not None})
+        keep = set(idxs[-track:])
+        tracked = [n for n in tracked if bidx(n) in keep]
+    run_ = logix.LogIX(project=f"ovh_rand_{os.getpid()}", config="exp31_config.yaml")
+    run_.config.lora.init = "random"
+    run_.watch(lx, name_filter=tracked, type_filter=[nn.Linear]); restore()
+    run_.add_lora(); restore()   # random init: no prior covariance pass needed
+    run_.setup({"forward": ["covariance"], "backward": ["covariance"], "grad": ["log"]})
+    run_.save(True)
+    ids = {"n": 0}
+    def dids(bs):
+        out = [str(ids["n"] + i) for i in range(bs)]; ids["n"] += bs; return out
+    opt = torch.optim.Adam([p for p in lx.parameters() if p.requires_grad], lr=1e-4)
+    _sync(device); t0 = time.perf_counter()
+    for xb, yb in batches:
+        ids["n"] = 0
+        opt.zero_grad(set_to_none=True)
+        with run_(data_id=dids(len(xb))):
+            out = lx(xb); logits = out if not hasattr(out, "logits") else out.logits
+            F.cross_entropy(logits, yb, reduction="sum").backward()
+        opt.step()
+    run_.finalize()
+    _sync(device)
+    return time.perf_counter() - t0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="EleutherAI/pythia-1b")
@@ -259,21 +308,28 @@ def main():
         inline_pct = float((np.median(lg_log) - plain_train) / plain_train * 100)
         cov_pass_pct = float(np.median(lg_cov) / plain_train * 100)
         cov_over_fwdbwd = float(np.median(lg_cov) / plain_fwdbwd)  # sanity: should be ~1
+        # LogIX RANDOM-init single-pass (covariance+log together) overhead, for the
+        # trade-off table (random=1 pass/lower quality vs PCA=2 passes/best quality).
+        lg_rand = np.median([logix_random_onepass_s(args.model, args.rank, args.track, batches, device)
+                             for _ in range(max(3, args.repeats // 3))])
+        rand_onepass_pct = float((lg_rand - plain_train) / plain_train * 100)
         res["logix"] = {
             "plain_train_s_median": round(plain_train, 4),
             "plain_fwd_bwd_s_median": round(float(plain_fwdbwd), 4),
             "logix_log_s_median": round(float(np.median(lg_log)), 4),
             "logix_cov_pass_s_median": round(float(np.median(lg_cov)), 4),
-            "logix_inline_logging_pct": round(inline_pct, 3),
-            "logix_covariance_pass_pct_of_training": round(cov_pass_pct, 3),
-            "logix_total_attribution_pct": round(inline_pct + cov_pass_pct, 3),
+            "logix_pca_inline_logging_pct": round(inline_pct, 3),
+            "logix_pca_covariance_pass_pct_of_training": round(cov_pass_pct, 3),
+            "logix_pca_total_attribution_pct": round(inline_pct + cov_pass_pct, 3),
+            "logix_random_onepass_s_median": round(float(lg_rand), 4),
+            "logix_random_onepass_overhead_pct": round(rand_onepass_pct, 3),
             "cov_pass_over_plain_fwd_bwd": round(cov_over_fwdbwd, 3),
-            "note": "VETTED exp31 setup (add_lora + watch/restore, storage-matched). Inline "
-                    "logging overhead = (logix_log - plain_train)/plain_train (same plain baseline "
-                    "as Traceprop). LogIX total attribution = inline logging + separate covariance "
-                    "pass. SANITY: cov_pass_over_plain_fwd_bwd should be ~1; >>1 means the covariance "
-                    "pass is misconfigured (e.g. full-dim covariance). Setup (build/watch/add_lora/ "
-                    "LogIX init) is EXCLUDED from all timed regions.",
+            "note": "VETTED exp31 setup (add_lora + watch/restore, storage-matched). Trade-off "
+                    "table: (1) LogIX-PCA = 2 passes: inline logging + separate PCA covariance pass "
+                    "(logix_pca_*). (2) LogIX-RANDOM = 1 pass: covariance+log together, no PCA pass "
+                    "(logix_random_onepass_*), lower projection quality. (3) Traceprop = 1 pass, "
+                    f"+{res['total_overhead_pct']}%. SANITY: cov_pass_over_plain_fwd_bwd should be ~1; "
+                    ">>1 means full-dim covariance. All setup EXCLUDED from timed regions.",
         }
 
     print(json.dumps(res, indent=2))
@@ -282,11 +338,12 @@ def main():
           f"p_cov={res['mwu_p_cov_gt_log']})")
     if args.with_logix:
         lx = res["logix"]
-        print(f"[overhead-hf] LogIX total attribution +{lx['logix_total_attribution_pct']}% "
-              f"= inline logging +{lx['logix_inline_logging_pct']}% + covariance pass "
-              f"+{lx['logix_covariance_pass_pct_of_training']}%  "
-              f"[SANITY cov_pass/plain_fwd_bwd = {lx['cov_pass_over_plain_fwd_bwd']}x, want ~1]  "
-              f"vs Traceprop +{res['total_overhead_pct']}% single pass")
+        print(f"[overhead-hf] LogIX-PCA (2-pass) total +{lx['logix_pca_total_attribution_pct']}% "
+              f"= logging +{lx['logix_pca_inline_logging_pct']}% + PCA cov pass "
+              f"+{lx['logix_pca_covariance_pass_pct_of_training']}%  "
+              f"[SANITY cov/fwd_bwd={lx['cov_pass_over_plain_fwd_bwd']}x]")
+        print(f"[overhead-hf] LogIX-RANDOM (1-pass) overhead +{lx['logix_random_onepass_overhead_pct']}%  "
+              f"vs Traceprop (1-pass) +{res['total_overhead_pct']}%")
     os.makedirs("results", exist_ok=True)
     with open(args.out, "w") as f:
         json.dump(res, f, indent=2)
