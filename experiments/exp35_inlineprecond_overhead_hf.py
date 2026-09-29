@@ -191,6 +191,11 @@ def logix_arm(model_name, rank, kfac, track, batches, device, init_strategy="pca
 
     # --- add_lora (storage-matched rank compression) + restore ---
     run_.add_lora()
+    # add_lora() creates its OWN compression modules (logix_lora_A/B/C) that default
+    # to fp32 regardless of the base model's dtype -- re-cast the whole (now-wrapped)
+    # model so LogIX's own added parameters match dtype too, or a bf16 activation
+    # hitting an fp32 logix_lora_* weight raises a dtype-mismatch RuntimeError.
+    lx = lx.to(dtype=dtype)
     restore_trainable()
     assert_pca_init_took_effect(run_, init_strategy)
 
@@ -241,7 +246,12 @@ def logix_random_onepass_s(model_name, rank, track, batches, device, dtype=torch
     run_ = logix.LogIX(project=f"ovh_rand_{os.getpid()}", config="exp31_config.yaml")
     run_.config.lora.init = "random"
     run_.watch(lx, name_filter=tracked, type_filter=[nn.Linear]); restore()
-    run_.add_lora(); restore()   # random init: no prior covariance pass needed
+    run_.add_lora()
+    # add_lora()'s own compression modules (logix_lora_A/B/C) default to fp32
+    # regardless of the base model's dtype -- re-cast the whole wrapped model so a
+    # bf16 activation doesn't hit an fp32 LogIX weight (dtype-mismatch RuntimeError).
+    lx = lx.to(dtype=dtype)
+    restore()   # random init: no prior covariance pass needed
     run_.setup({"forward": ["covariance"], "backward": ["covariance"], "grad": ["log"]})
     run_.save(True)
     ids = {"n": 0}
