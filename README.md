@@ -309,6 +309,60 @@ The first three datasets clear Bonferroni at α=0.05/4=0.0125 on paired t-test, 
 
 ---
 
+## Reproducing the single-pass attribution results
+
+`LoRAGradientLogger` folds inline factored per-sample gradient logging and inline K-FAC-style
+preconditioning into a single training backward pass on LoRA fine-tunes: the sketch-space
+covariance is accumulated from the same projected factors the logging sketch already computes,
+so no separate covariance pass is needed. The table below maps each reported result to the
+script and results file that produced it.
+
+| Result | Script | Results file | Hardware | Approx. runtime |
+|---|---|---|---|---|
+| Pythia-1B overhead (headline) | `experiments/exp35_inlineprecond_overhead_hf.py` | `results/exp35_inlineprecond_overhead_hf_pythia1b.json` | GPU (A100) | ~35–45 min |
+| Pythia-6.9B overhead | `experiments/exp35_inlineprecond_overhead_hf.py` | `results/exp35_inlineprecond_overhead_hf_pythia7b.json` | GPU (A100, bf16) | ~3–8 min |
+| Tiny-transformer LDS, PCA-init fairness campaign (5 seeds) | `experiments/exp35_logix_lds.py` via `experiments/run_inlineprecond_fairness.sh` | `results/exp35_tiny_track0_fairpmv3_seed{0..4}*.json/.npz` | CPU | a few min/seed |
+| Tiny-transformer LDS, random-init fairness campaign (5 seeds) | same, `--lora_init random` | `results/exp35_tiny_track0_fairrand_seed{0..4}*.json/.npz` | CPU | a few min/seed |
+| Pooled cross-seed bootstrap (inline vs. LogIX-tuned) | `experiments/exp35_pooled_bootstrap.py` | `results/exp35_tiny_track0_fairpmv3_pooled_kfac{7,8}.json` | CPU | seconds |
+| LogIX random-init vs. PCA-init bootstrap | `experiments/exp35_logix_random_vs_pca_bootstrap.py` | `results/exp35_logix_random_vs_pca_pooled.json` | CPU | seconds |
+| SST-2/Pythia-160M pilot | `notebooks/pilot_p160_colab.ipynb` (full campaign: `notebooks/campaign_p160_colab.ipynb`) | `results/exp35_p160_sst2_pilot_seed0.json` | GPU (Colab) | ~10–20 min |
+| Planted-backdoor / mislabel detection (exp37) | `experiments/exp37_planted_detection.py` via `notebooks/exp37_pythia_colab.ipynb` | `results/exp37_pythia160m_sst2.json` (+ `_raw.npz`) | GPU (Colab) | ~15–30 min |
+
+Exact commands:
+
+```bash
+cd experiments  # all commands below are run from here; results land in experiments/results/
+
+# Pythia-1B overhead headline (A100)
+python exp35_inlineprecond_overhead_hf.py --model EleutherAI/pythia-1b --device cuda \
+  --steps 200 --batch 8 --seq 128 --repeats 10 --with_logix
+
+# Pythia-6.9B overhead (A100, auto dtype)
+python exp35_inlineprecond_overhead_hf.py --model EleutherAI/pythia-6.9b --device cuda \
+  --track 0 --kfac 8 --dtype auto --steps 50 --batch 8 --seq 128 --repeats 5 \
+  --with_logix --skip_logix_pca --skip_log_only \
+  --out results/exp35_inlineprecond_overhead_hf_pythia7b.json
+
+# Tiny-transformer LDS fairness campaigns (CPU, 5 seeds each)
+./run_inlineprecond_fairness.sh "0 1 2 3 4" fairpmv3          # PCA-init
+./run_inlineprecond_fairness.sh "0 1 2 3 4" fairrand "--lora_init random"  # random-init
+
+# Pooled bootstraps (CPU)
+python exp35_pooled_bootstrap.py --base exp35_tiny_track0_fairpmv3 --seeds 0 1 2 3 4 --kfac 8
+python exp35_logix_random_vs_pca_bootstrap.py --seeds 0 1 2 3 4
+```
+
+The SST-2 pilot and exp37 (planted backdoor / mislabel detection) are run from their Colab
+notebooks (`notebooks/pilot_p160_colab.ipynb`, `notebooks/exp37_pythia_colab.ipynb`), which
+clone this repo and invoke `experiments/exp37_planted_detection.py` directly; see each
+notebook's cells for the exact CLI flags used.
+
+Exactness claims (inline-accumulated covariance matches an independent separate-pass
+computation; per-sample gradients match individual autograd) are backed by
+[`tests/unit/test_lora_logging.py`](tests/unit/test_lora_logging.py).
+
+---
+
 ## Backends
 
 | Backend | Install | Usage |
