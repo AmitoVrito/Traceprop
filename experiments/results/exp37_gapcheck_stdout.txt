@@ -1,0 +1,266 @@
+[exp37] === seed 0 (1/1) ===
+[exp37] trigger overflow (had to overwrite real content, no pad room to append): 0/400 train rows (0.0%)
+[exp37] WARNING seed 0: backdoor gap +0.2500 < 0.3 -- this seed's backdoor AUCs are flagged invalid (the model likely never learned the trigger, so the AUCs above measure something else, e.g. the label-sign artifact auc_within_target is designed to avoid).
+  backdoor_success=0.7000 clean_control=0.4500 gap=+0.2500 learned=False overhead=29.04%
+  backdoor-dot: auc_within_target=0.9142 (auc_all=0.9461, sign_sanity_check=1.0000)
+  backdoor-cosine: auc_within_target=0.9468 (auc_all=0.9666, sign_sanity_check=1.0000)
+  backdoor-trak: auc_within_target=0.5248 (auc_all=0.5290, sign_sanity_check=0.5603)
+  backdoor-repr_similarity: auc_within_target=0.9990 (auc_all=0.9683, sign_sanity_check=0.4722)
+  backdoor-label_match: auc_within_target=0.5000 (auc_all=0.6862, sign_sanity_check=1.0000)
+  backdoor-label_aware_repr: auc_within_target=0.9990 (auc_all=0.9994, sign_sanity_check=1.0000)
+[exp37] WARNING: NO seed reached the backdoor gap threshold (0.3) -- falling back to ALL seeds for the aggregate, but treat the backdoor AUCs below as unreliable. Raise --plant_frac or --epochs and rerun.
+{
+  "backend": "hf",
+  "model": "EleutherAI/pythia-160m",
+  "device": "cuda",
+  "n_seeds": 1,
+  "seeds": [
+    0
+  ],
+  "n_train": 2000,
+  "k_backdoor": 300,
+  "k_distractor": 100,
+  "k_mislabel": 100,
+  "trigger_len": 8,
+  "backdoor_target_label": 1,
+  "epochs": 15,
+  "proj_dim": 512,
+  "track_last_n_blocks": 0,
+  "overhead_pct": {
+    "mean": 29.0443,
+    "std": 0.0
+  },
+  "backdoor_success_rate": {
+    "mean": 0.7,
+    "std": 0.0
+  },
+  "clean_target_rate": {
+    "mean": 0.45,
+    "std": 0.0
+  },
+  "backdoor_random_auc": {
+    "mean": 0.5104,
+    "std": 0.0
+  },
+  "trigger_overflow_rows_total": 0,
+  "trigger_overflow_denominator_total": 400,
+  "n_valid_seeds": 0,
+  "n_seeds_total": 1,
+  "per_seed_backdoor_learned": [
+    false
+  ],
+  "primary_backdoor": {
+    "dot": {
+      "auc": {
+        "mean": 0.9461,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.6767,
+        "std": 0.0
+      },
+      "auc_excl_mislabel": {
+        "mean": 0.9522,
+        "std": 0.0
+      },
+      "precision_at_k_excl_mislabel": {
+        "mean": 0.7133,
+        "std": 0.0
+      },
+      "auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY": {
+        "mean": 1.0,
+        "std": 0.0
+      },
+      "auc_within_target": {
+        "mean": 0.9142,
+        "std": 0.0
+      }
+    },
+    "cosine": {
+      "auc": {
+        "mean": 0.9666,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.8633,
+        "std": 0.0
+      },
+      "auc_excl_mislabel": {
+        "mean": 0.9656,
+        "std": 0.0
+      },
+      "precision_at_k_excl_mislabel": {
+        "mean": 0.8633,
+        "std": 0.0
+      },
+      "auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY": {
+        "mean": 1.0,
+        "std": 0.0
+      },
+      "auc_within_target": {
+        "mean": 0.9468,
+        "std": 0.0
+      }
+    },
+    "trak": {
+      "auc": {
+        "mean": 0.529,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.25,
+        "std": 0.0
+      },
+      "auc_excl_mislabel": {
+        "mean": 0.5285,
+        "std": 0.0
+      },
+      "precision_at_k_excl_mislabel": {
+        "mean": 0.2633,
+        "std": 0.0
+      },
+      "auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY": {
+        "mean": 0.5603,
+        "std": 0.0
+      },
+      "auc_within_target": {
+        "mean": 0.5248,
+        "std": 0.0
+      }
+    },
+    "repr_similarity": {
+      "auc": {
+        "mean": 0.9683,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.75,
+        "std": 0.0
+      },
+      "auc_excl_mislabel": {
+        "mean": 0.9664,
+        "std": 0.0
+      },
+      "precision_at_k_excl_mislabel": {
+        "mean": 0.75,
+        "std": 0.0
+      },
+      "auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY": {
+        "mean": 0.4722,
+        "std": 0.0
+      },
+      "auc_within_target": {
+        "mean": 0.999,
+        "std": 0.0
+      }
+    },
+    "label_match": {
+      "auc": {
+        "mean": 0.6862,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.24,
+        "std": 0.0
+      },
+      "auc_excl_mislabel": {
+        "mean": 0.6781,
+        "std": 0.0
+      },
+      "precision_at_k_excl_mislabel": {
+        "mean": 0.23,
+        "std": 0.0
+      },
+      "auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY": {
+        "mean": 1.0,
+        "std": 0.0
+      },
+      "auc_within_target": {
+        "mean": 0.5,
+        "std": 0.0
+      }
+    },
+    "label_aware_repr": {
+      "auc": {
+        "mean": 0.9994,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.9767,
+        "std": 0.0
+      },
+      "auc_excl_mislabel": {
+        "mean": 0.9994,
+        "std": 0.0
+      },
+      "precision_at_k_excl_mislabel": {
+        "mean": 0.9767,
+        "std": 0.0
+      },
+      "auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY": {
+        "mean": 1.0,
+        "std": 0.0
+      },
+      "auc_within_target": {
+        "mean": 0.999,
+        "std": 0.0
+      }
+    }
+  },
+  "secondary_mislabel": {
+    "loss": {
+      "auc": {
+        "mean": 0.7045,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.31,
+        "std": 0.0
+      }
+    },
+    "grad_norm": {
+      "auc": {
+        "mean": 0.7948,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.16,
+        "std": 0.0
+      }
+    },
+    "self_infl_dot": {
+      "auc": {
+        "mean": 0.7948,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.16,
+        "std": 0.0
+      }
+    },
+    "self_infl_trak": {
+      "auc": {
+        "mean": 0.7805,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.14,
+        "std": 0.0
+      }
+    },
+    "random": {
+      "auc": {
+        "mean": 0.4861,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.07,
+        "std": 0.0
+      }
+    }
+  },
+  "note": "backdoor and distractor examples are both sampled ONLY from the non-target class, so every 'poisoned' example is a real label flip and every distractor keeps its TRUE (non-target) label while carrying the trigger. auc_within_target is the PRIMARY attribution metric: computed only over training examples labeled with the target class (poisoned vs. examples that were already, naturally, target-labeled), where every row shares the same label so label_match is exactly 0.5 by construction and cannot contribute to separation -- any AUC above 0.5 has to come from the trigger itself. auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY is NOT attribution evidence: a per-example output-layer gradient's sign follows the training label (poison=target label, distractor=non-target label), so this AUC hits 1.0 from the label-sign artifact alone, confirmed empirically in a smoke test where it hit 1.0 with backdoor_success_rate=0 (before the model had learned anything about the trigger) -- use it only to confirm scores have the expected sign, never to claim attribution works. label_match and label_aware_repr are label-aware baselines reported for every AUC as fair competitors once the metric depends on labels; label_aware_repr matching or beating gradient methods on auc_within_target is a real possible outcome (representations of triggered inputs are often dominated by the trigger once it's learned) and should be reported honestly, not hidden. backdoor AUCs for a seed with backdoor_gap < min_backdoor_gap are excluded from these aggregates (see per_seed_backdoor_learned and n_valid_seeds)."
+}
+
+saved -> results/exp37_gapcheck.json
+saved -> results/exp37_gapcheck_raw.npz (per-seed raw per-example arrays: every score variant, y_train, is_backdoor/is_distractor/is_mislabel, backdoor_success_rate, clean_target_rate -- lets any metric be recomputed without another GPU run)

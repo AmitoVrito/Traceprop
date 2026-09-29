@@ -1,0 +1,234 @@
+{
+  "source": "results/exp37_gapcheck_stdout.txt",
+  "source_provenance": "stdout transcript of notebooks/exp37_pythia_colab.ipynb cell 6 (gap-check cell, n_seeds=1); the run's own results/exp37_gapcheck.json and results/exp37_gapcheck_raw.npz were never copied off the ephemeral Colab runtime, so this is reconstructed from the script's own print(json.dumps(out)) call captured in the saved stdout, not retyped from memory or recomputed from raw per-example arrays.",
+  "run_params": {
+    "backend": "hf",
+    "model": "EleutherAI/pythia-160m",
+    "n_seeds": 1,
+    "seeds": [
+      0
+    ],
+    "n_train": 2000,
+    "k_backdoor": 300,
+    "k_distractor": 100,
+    "k_mislabel": 100,
+    "trigger_len": 8,
+    "epochs": 15
+  },
+  "backdoor_gap_check": {
+    "per_seed_backdoor_learned": [
+      false
+    ],
+    "status": "FAILED (gap +0.25 < 0.3 threshold) per the script's own warning -- backdoor AUCs from this run are NOT used as evidence in the paper; mislabel AUCs below are unaffected by this and are used."
+  },
+  "secondary_mislabel": {
+    "loss": {
+      "auc": {
+        "mean": 0.7045,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.31,
+        "std": 0.0
+      }
+    },
+    "grad_norm": {
+      "auc": {
+        "mean": 0.7948,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.16,
+        "std": 0.0
+      }
+    },
+    "self_infl_dot": {
+      "auc": {
+        "mean": 0.7948,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.16,
+        "std": 0.0
+      }
+    },
+    "self_infl_trak": {
+      "auc": {
+        "mean": 0.7805,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.14,
+        "std": 0.0
+      }
+    },
+    "random": {
+      "auc": {
+        "mean": 0.4861,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.07,
+        "std": 0.0
+      }
+    }
+  },
+  "primary_backdoor_unreliable_do_not_cite": {
+    "dot": {
+      "auc": {
+        "mean": 0.9461,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.6767,
+        "std": 0.0
+      },
+      "auc_excl_mislabel": {
+        "mean": 0.9522,
+        "std": 0.0
+      },
+      "precision_at_k_excl_mislabel": {
+        "mean": 0.7133,
+        "std": 0.0
+      },
+      "auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY": {
+        "mean": 1.0,
+        "std": 0.0
+      },
+      "auc_within_target": {
+        "mean": 0.9142,
+        "std": 0.0
+      }
+    },
+    "cosine": {
+      "auc": {
+        "mean": 0.9666,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.8633,
+        "std": 0.0
+      },
+      "auc_excl_mislabel": {
+        "mean": 0.9656,
+        "std": 0.0
+      },
+      "precision_at_k_excl_mislabel": {
+        "mean": 0.8633,
+        "std": 0.0
+      },
+      "auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY": {
+        "mean": 1.0,
+        "std": 0.0
+      },
+      "auc_within_target": {
+        "mean": 0.9468,
+        "std": 0.0
+      }
+    },
+    "trak": {
+      "auc": {
+        "mean": 0.529,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.25,
+        "std": 0.0
+      },
+      "auc_excl_mislabel": {
+        "mean": 0.5285,
+        "std": 0.0
+      },
+      "precision_at_k_excl_mislabel": {
+        "mean": 0.2633,
+        "std": 0.0
+      },
+      "auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY": {
+        "mean": 0.5603,
+        "std": 0.0
+      },
+      "auc_within_target": {
+        "mean": 0.5248,
+        "std": 0.0
+      }
+    },
+    "repr_similarity": {
+      "auc": {
+        "mean": 0.9683,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.75,
+        "std": 0.0
+      },
+      "auc_excl_mislabel": {
+        "mean": 0.9664,
+        "std": 0.0
+      },
+      "precision_at_k_excl_mislabel": {
+        "mean": 0.75,
+        "std": 0.0
+      },
+      "auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY": {
+        "mean": 0.4722,
+        "std": 0.0
+      },
+      "auc_within_target": {
+        "mean": 0.999,
+        "std": 0.0
+      }
+    },
+    "label_match": {
+      "auc": {
+        "mean": 0.6862,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.24,
+        "std": 0.0
+      },
+      "auc_excl_mislabel": {
+        "mean": 0.6781,
+        "std": 0.0
+      },
+      "precision_at_k_excl_mislabel": {
+        "mean": 0.23,
+        "std": 0.0
+      },
+      "auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY": {
+        "mean": 1.0,
+        "std": 0.0
+      },
+      "auc_within_target": {
+        "mean": 0.5,
+        "std": 0.0
+      }
+    },
+    "label_aware_repr": {
+      "auc": {
+        "mean": 0.9994,
+        "std": 0.0
+      },
+      "precision_at_k": {
+        "mean": 0.9767,
+        "std": 0.0
+      },
+      "auc_excl_mislabel": {
+        "mean": 0.9994,
+        "std": 0.0
+      },
+      "precision_at_k_excl_mislabel": {
+        "mean": 0.9767,
+        "std": 0.0
+      },
+      "auc_poison_vs_distractor_SIGN_SANITY_CHECK_ONLY": {
+        "mean": 1.0,
+        "std": 0.0
+      },
+      "auc_within_target": {
+        "mean": 0.999,
+        "std": 0.0
+      }
+    }
+  }
+}
