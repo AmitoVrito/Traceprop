@@ -1,0 +1,39 @@
+{
+  "model": "EleutherAI/pythia-6.9b",
+  "device": "cuda",
+  "dtype": "bf16",
+  "dtype_requested": "auto",
+  "n_tracked_layers": 66,
+  "kfac": 8,
+  "track": 0,
+  "steps": 50,
+  "batch": 8,
+  "seq": 128,
+  "repeats": 5,
+  "none_s_median": 7.5315,
+  "log_cov_s_median": 8.3914,
+  "total_overhead_pct": 11.274,
+  "mwu_p_total_gt_plain": 0.00397,
+  "logix": {
+    "logix_random_onepass_s_median": 9.564,
+    "logix_random_onepass_overhead_pct": 26.987,
+    "logix_random_onepass_repeats": 5,
+    "logix_random_onepass_overhead_pct_samples": [
+      26.838,
+      26.987,
+      27.661,
+      27.019,
+      26.891
+    ],
+    "traceprop_total_overhead_pct_samples": [
+      14.388,
+      11.274,
+      11.418,
+      11.011,
+      11.272
+    ],
+    "traceprop_repeats": 5,
+    "mwu_p_logix_random_gt_traceprop": 0.00397,
+    "note": "VETTED exp31 setup (add_lora + watch/restore, storage-matched). LogIX-RANDOM = 1 pass, LogIX's best config on both speed and quality (fairrand beats PCA-init on quality too, so PCA is not a stronger reference point despite being 2 passes). Traceprop = 1 pass, +11.274%. mwu_p_logix_random_gt_traceprop: one-sided Mann-Whitney, LogIX-random overhead-% samples > Traceprop overhead-% samples, both arms at the SAME repeat count (traceprop_repeats == logix_random_onepass_repeats == --repeats). All setup EXCLUDED from timed regions."
+  }
+}
