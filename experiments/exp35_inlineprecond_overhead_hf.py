@@ -309,10 +309,23 @@ def main():
         cov_pass_pct = float(np.median(lg_cov) / plain_train * 100)
         cov_over_fwdbwd = float(np.median(lg_cov) / plain_fwdbwd)  # sanity: should be ~1
         # LogIX RANDOM-init single-pass (covariance+log together) overhead, for the
-        # trade-off table (random=1 pass/lower quality vs PCA=2 passes/best quality).
-        lg_rand = np.median([logix_random_onepass_s(args.model, args.rank, args.track, batches, device)
-                             for _ in range(max(3, args.repeats // 3))])
-        rand_onepass_pct = float((lg_rand - plain_train) / plain_train * 100)
+        # trade-off table. NOTE: fairrand (tiny-backend LDS) showed random-init is LogIX's
+        # BEST quality config, not "lower quality" -- PCA-init is dominated (worse quality
+        # AND needs a second pass). Uses the SAME repeat count as Traceprop (not repeats//3)
+        # and keeps every raw sample so a real Mann-Whitney test against Traceprop's total
+        # is possible, not just a median-vs-median comparison.
+        rand_samples = np.array([
+            logix_random_onepass_s(args.model, args.rank, args.track, batches, device)
+            for _ in range(args.repeats)
+        ])
+        lg_rand = float(np.median(rand_samples))
+        rand_onepass_pct_samples = (rand_samples - plain_train) / plain_train * 100
+        rand_onepass_pct = float(np.median(rand_onepass_pct_samples))
+        # Traceprop's own overhead-pct samples (c = log_cov total time, a = plain baseline),
+        # computed the same way, so both sides of the MWU test are apples-to-apples percentages
+        # rather than mixing raw seconds against percentages.
+        tp_total_pct_samples = (c - a) / a * 100
+        mwu_p_tp_lt_logix_random = mwu_one_sided_greater(rand_onepass_pct_samples, tp_total_pct_samples)
         res["logix"] = {
             "plain_train_s_median": round(plain_train, 4),
             "plain_fwd_bwd_s_median": round(float(plain_fwdbwd), 4),
@@ -323,13 +336,23 @@ def main():
             "logix_pca_total_attribution_pct": round(inline_pct + cov_pass_pct, 3),
             "logix_random_onepass_s_median": round(float(lg_rand), 4),
             "logix_random_onepass_overhead_pct": round(rand_onepass_pct, 3),
+            "logix_random_onepass_repeats": int(args.repeats),
+            "logix_random_onepass_overhead_pct_samples": [round(float(x), 3) for x in rand_onepass_pct_samples],
+            "traceprop_total_overhead_pct_samples": [round(float(x), 3) for x in tp_total_pct_samples],
+            "traceprop_repeats": int(args.repeats),
+            "mwu_p_logix_random_gt_traceprop": round(mwu_p_tp_lt_logix_random, 5),
             "cov_pass_over_plain_fwd_bwd": round(cov_over_fwdbwd, 3),
             "note": "VETTED exp31 setup (add_lora + watch/restore, storage-matched). Trade-off "
                     "table: (1) LogIX-PCA = 2 passes: inline logging + separate PCA covariance pass "
-                    "(logix_pca_*). (2) LogIX-RANDOM = 1 pass: covariance+log together, no PCA pass "
-                    "(logix_random_onepass_*), lower projection quality. (3) Traceprop = 1 pass, "
-                    f"+{res['total_overhead_pct']}%. SANITY: cov_pass_over_plain_fwd_bwd should be ~1; "
-                    ">>1 means full-dim covariance. All setup EXCLUDED from timed regions.",
+                    "(logix_pca_*), dominated -- fairrand shows random-init beats PCA-init on "
+                    "quality too, so PCA is worse on both axes. (2) LogIX-RANDOM = 1 pass, LogIX's "
+                    "best config (logix_random_onepass_*). (3) Traceprop = 1 pass, "
+                    f"+{res['total_overhead_pct']}%. mwu_p_logix_random_gt_traceprop: one-sided "
+                    "Mann-Whitney, LogIX-random overhead-% samples > Traceprop overhead-% samples, "
+                    "both arms at the SAME repeat count (traceprop_repeats == "
+                    "logix_random_onepass_repeats == --repeats, not repeats//3 for LogIX-random). "
+                    "SANITY: cov_pass_over_plain_fwd_bwd should be ~1; >>1 means full-dim "
+                    "covariance. All setup EXCLUDED from timed regions.",
         }
 
     print(json.dumps(res, indent=2))
@@ -343,7 +366,9 @@ def main():
               f"+{lx['logix_pca_covariance_pass_pct_of_training']}%  "
               f"[SANITY cov/fwd_bwd={lx['cov_pass_over_plain_fwd_bwd']}x]")
         print(f"[overhead-hf] LogIX-RANDOM (1-pass) overhead +{lx['logix_random_onepass_overhead_pct']}%  "
-              f"vs Traceprop (1-pass) +{res['total_overhead_pct']}%")
+              f"vs Traceprop (1-pass) +{res['total_overhead_pct']}%  "
+              f"[n={lx['logix_random_onepass_repeats']} vs n={lx['traceprop_repeats']}, "
+              f"MWU p(LogIX-random > Traceprop)={lx['mwu_p_logix_random_gt_traceprop']}]")
     os.makedirs("results", exist_ok=True)
     with open(args.out, "w") as f:
         json.dump(res, f, indent=2)
