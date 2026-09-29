@@ -17,9 +17,13 @@ With --with_logix, also times LogIX on the SAME model/batches:
   LogIX total attribution = logging pass + covariance pass (both EXTRA passes over
   the data), vs Traceprop folding everything into the single training pass.
 
-Colab A100, 1B:
+Colab A100, 1B (--grouped_dispatch batches same-shape modules into one
+einsum/bmm call per shape group instead of one per module -- see
+traceprop/llm/lora_logging.py's _factored_sketch_grouped and
+tests/unit/test_lora_logging.py::test_grouped_dispatch_matches_loop for the
+numerical-equivalence check; a 7B flush_step A/B showed 1.42x speedup):
   python exp35_inlineprecond_overhead_hf.py --model EleutherAI/pythia-1b --device cuda \
-     --steps 200 --batch 8 --seq 128 --repeats 10 --with_logix
+     --steps 200 --batch 8 --seq 128 --repeats 10 --with_logix --grouped_dispatch
 
 Colab A100, 7B (dtype auto-detects bf16 on 40GB / fp32 on 80GB; skips the LogIX-PCA
 arm since full-dim covariance is prohibitive at this scale and PCA is dominated by
@@ -27,7 +31,7 @@ LogIX-random on both speed and quality at 1B already; skips Traceprop's logging-
 arm to keep the run short):
   python exp35_inlineprecond_overhead_hf.py --model EleutherAI/pythia-6.9b --device cuda \
      --track 0 --kfac 8 --dtype auto --steps 50 --batch 8 --seq 128 --repeats 5 \
-     --with_logix --skip_logix_pca --skip_log_only \
+     --with_logix --skip_logix_pca --skip_log_only --grouped_dispatch \
      --out results/exp35_inlineprecond_overhead_hf_pythia7b.json
 """
 import argparse
@@ -71,7 +75,7 @@ def build(model_name, rank, device, dtype=torch.float32):
     return build_hf_classifier(model_name, r=rank).to(device=device, dtype=dtype)
 
 
-def tp_loop(model, batches, mode, kfac, track, device):
+def tp_loop(model, batches, mode, kfac, track, device, grouped_dispatch=False):
     """Traceprop timing. mode in {'none','log','log_cov'}. Returns seconds."""
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.Adam(params, lr=1e-4)
@@ -82,7 +86,8 @@ def tp_loop(model, batches, mode, kfac, track, device):
         targets = select_lora_linears(model, patterns, last_n_blocks=last_n)
         store = GradientStore(proj_dim=512, seed=42)
         lg = LoRAGradientLogger(store, targets, proj_dim=512, factored=True,
-                                kfac=kfac, inline_precond=(mode == "log_cov"))
+                                kfac=kfac, inline_precond=(mode == "log_cov"),
+                                grouped_dispatch=grouped_dispatch)
     _sync(device)
     t0 = time.perf_counter()
     for xb, yb in batches:
@@ -298,6 +303,12 @@ def main():
     ap.add_argument("--skip_log_only", action="store_true",
                     help="skip Traceprop's logging-only (no covariance) arm; only "
                          "measure plain training and the full log+cov total")
+    ap.add_argument("--grouped_dispatch", action="store_true",
+                    help="batch modules of identical (d_out,d_in) shape into one "
+                         "einsum/bmm call per shape group instead of one per module "
+                         "(numerically identical to the default per-module loop, see "
+                         "tests/unit/test_lora_logging.py::test_grouped_dispatch_matches_loop; "
+                         "off by default so existing results are reproducible unchanged)")
     ap.add_argument("--out", default="results/exp35_inlineprecond_overhead_hf.json")
     args = ap.parse_args()
 
@@ -315,13 +326,18 @@ def main():
 
     print(f"[overhead-hf] {args.model} on {device}, dtype={dtype_name} (requested="
           f"{args.dtype}), {n_tracked} tracked layers, kfac={args.kfac}, "
-          f"{args.steps} steps x b{args.batch} x s{args.seq}, {args.repeats} repeats")
+          f"{args.steps} steps x b{args.batch} x s{args.seq}, {args.repeats} repeats, "
+          f"grouped_dispatch={args.grouped_dispatch}")
 
     a, b, c = [], [], []
     for r in range(args.repeats + 1):
-        da = tp_loop(model, batches, "none", args.kfac, args.track, device)
-        db = None if args.skip_log_only else tp_loop(model, batches, "log", args.kfac, args.track, device)
-        dc = tp_loop(model, batches, "log_cov", args.kfac, args.track, device)
+        da = tp_loop(model, batches, "none", args.kfac, args.track, device,
+                     grouped_dispatch=args.grouped_dispatch)
+        db = None if args.skip_log_only else tp_loop(
+            model, batches, "log", args.kfac, args.track, device,
+            grouped_dispatch=args.grouped_dispatch)
+        dc = tp_loop(model, batches, "log_cov", args.kfac, args.track, device,
+                     grouped_dispatch=args.grouped_dispatch)
         if r == 0:
             continue
         a.append(da)
@@ -339,6 +355,7 @@ def main():
         "dtype_requested": args.dtype, "n_tracked_layers": n_tracked,
         "kfac": args.kfac, "track": args.track, "steps": args.steps,
         "batch": args.batch, "seq": args.seq, "repeats": args.repeats,
+        "grouped_dispatch": args.grouped_dispatch,
         "none_s_median": round(float(np.median(a)), 4),
         "log_cov_s_median": round(float(np.median(c)), 4),
         "total_overhead_pct": round(float(np.median((c - a) / a) * 100), 3),
