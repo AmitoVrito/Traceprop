@@ -185,6 +185,9 @@ class LoRAGradientLogger:
         # flush_step(buffer=True) as soon as the buffer exceeds the budget.
         self.flush_bytes = flush_bytes
         self._buffered_bytes = 0
+        # Per-module count of per-example sketch blocks produced (loop path only).
+        # Modules whose hooks never fire never appear here; read via sketch_entry_counts().
+        self._sketch_entry_counts: dict[str, int] = {}
         self.store._proj_dim = proj_dim
         self._attach()
 
@@ -305,6 +308,11 @@ class LoRAGradientLogger:
                 Pg = torch.einsum("bto,ko->btk", g.float(), P)   # (B,T,k_out)
                 Qa = torch.einsum("bti,li->btl", a.float(), Q)   # (B,T,k_in)
                 S = torch.einsum("btk,btl->bkl", Pg, Qa)          # (B,k_out,k_in)
+                # Per-module count of per-example sketch blocks produced. A module
+                # whose hooks never fire (e.g. PEFT's frozen modules_to_save original,
+                # never called in forward) is skipped above and stays at 0 -- a dead hook.
+                self._sketch_entry_counts[name] = (
+                    self._sketch_entry_counts.get(name, 0) + int(S.shape[0]))
                 if self.inline_precond:
                     # Covariance of the PROJECTED factors over all tokens this batch:
                     # cov_G += (P g)^T (P g), cov_A += (Q a)^T (Q a). In-place fused
@@ -594,6 +602,13 @@ class LoRAGradientLogger:
         self._gpu_buffer_idx.clear()
         self._buffered_bytes = 0
         return n
+
+    def sketch_entry_counts(self) -> "dict[str, int]":
+        """Per-tracked-module count of per-example sketch blocks produced over the run
+        (loop path). Every tracked module is present; a module hooked but never fired
+        (e.g. PEFT's frozen \texttt{modules_to_save} original, never called in forward)
+        reports 0 -- a dead hook."""
+        return {name: self._sketch_entry_counts.get(name, 0) for name in self._names}
 
     def detach(self) -> None:
         self.drain()

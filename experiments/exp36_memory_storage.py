@@ -82,6 +82,9 @@ def main():
     model = build_hf_classifier(args.model, r=args.rank).to(device=device, dtype=dtype)
     n_modules = len(select_lora_linears(model, SCOPE_PATTERNS, last_n_blocks=last_n))
     print(f"[exp36] tracked modules under headline scope: {n_modules}")
+    if args.model == "EleutherAI/pythia-1b" and args.track <= 0:
+        assert n_modules == 34, (
+            f"expected the headline 34-module scope, got {n_modules}; scope/stack changed")
     torch.cuda.reset_peak_memory_stats(device)
     train_pass(model, batches, logger=None)
     torch.cuda.synchronize(device)
@@ -108,6 +111,17 @@ def main():
     torch.cuda.synchronize(device)
     drain_s = time.perf_counter() - t0
 
+    # Per-module sketch-entry counts: a module hooked but never fired (e.g. PEFT's
+    # frozen modules_to_save original of the head) reports 0 -- a dead hook.
+    sketch_entry_counts = lg.sketch_entry_counts()
+    dead_hooks = sorted(n for n, c in sketch_entry_counts.items() if c == 0)
+    active_modules = sum(1 for c in sketch_entry_counts.values() if c > 0)
+    print(f"[exp36] per-module sketch entries ({active_modules}/{len(sketch_entry_counts)} active):")
+    for name, c in sorted(sketch_entry_counts.items()):
+        print(f"    {c:>6d}  {name}")
+    if dead_hooks:
+        print(f"[exp36] dead hooks (0 sketch entries): {dead_hooks}")
+
     sketch_dim = int(lg.sketch_dim)          # concatenated k_out*k_in over modules
     bytes_per_example = sketch_dim * 4        # fp32 store, as implemented
     bpe_per_module = bytes_per_example / max(n_modules, 1)
@@ -131,6 +145,9 @@ def main():
         "n_examples_committed": int(n_committed),
         "total_store_bytes_after_run": int(total_store_bytes),
         "host_drain_time_s": round(drain_s, 4),
+        "sketch_entry_counts": sketch_entry_counts,
+        "dead_hooks": dead_hooks,
+        "n_active_modules": active_modules,
         "buffer_projection_bytes": {"1e5": int(bytes_per_example * 1e5),
                                     "1e6": int(bytes_per_example * 1e6)},
         "note": "Peak GPU memory via torch.cuda.max_memory_allocated over the full pass; "
