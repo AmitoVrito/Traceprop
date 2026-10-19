@@ -747,6 +747,63 @@ def run(args):
                     "inline_overhead_pct": inline_overhead_pct,
                 }
 
+    # ---- Rank-agreement mode (review item 9): how similarly do Traceprop and
+    # LogIX random-init rank the SAME training examples for the SAME test queries,
+    # at 1B where LDS is noise-limited. No retraining needed -- rank agreement is a
+    # relative measure between the two methods on the same run. Two pairs:
+    #   (1) dot, no preconditioning, damping-free;
+    #   (2) preconditioned at a shared RELATIVE damping delta, applied identically
+    #       (Traceprop via apply_kfac_precondition(delta); LogIX via its own grid at
+    #       the same relative delta -- both use the same relative grid), plus delta/10
+    #       and 10*delta as a sensitivity check.
+    # Reuses the already-computed logix_dot, logix_precond_grid, and factored
+    # gradients; dumps the (n_test, n_train) matrices and exits before retraining.
+    if getattr(args, "rank_agreement_out", None):
+        from scipy.stats import spearmanr, kendalltau
+        if not logix_precond_grid:
+            raise SystemExit(
+                "rank-agreement: logix_precond_grid is empty, so the preconditioned pair would "
+                "silently fall back to LogIX-dot. Pass --tune_logix (and --logix_permodule_damping) "
+                "so the LogIX relative-damping sweep is built.")
+        deltas = [float(x) for x in getattr(args, "rank_deltas", "1e-3,1e-4,1e-2").split(",")]
+        lab = "8" if "8" in factored_variants else sorted(factored_variants)[0]
+        fv = factored_variants[lab]
+        Gtr, Gte = fv["G_train"], fv["G_test"]
+        layout, cov_G, cov_A = fv["cov_bundle"]
+        mats = {"tp_dot": (Gte @ Gtr.T).astype(np.float32),
+                "lx_dot": logix_dot.astype(np.float32)}
+        used_lx_keys = {}
+        for d in deltas:
+            Wtr = apply_kfac_precondition(Gtr, layout, cov_G, cov_A, d)
+            Wte = apply_kfac_precondition(Gte, layout, cov_G, cov_A, d)
+            mats[f"tp_pc_{d:g}"] = (Wte @ Wtr.T).astype(np.float32)
+            key = min(logix_precond_grid, key=lambda k: abs(k - d)) if logix_precond_grid else None
+            used_lx_keys[d] = key
+            mats[f"lx_pc_{d:g}"] = (logix_precond_grid[key].astype(np.float32)
+                                     if key is not None else logix_dot.astype(np.float32))
+
+        def agree(A, B):
+            rho = [spearmanr(A[q], B[q]).correlation for q in range(A.shape[0])]
+            tau = [kendalltau(A[q], B[q]).correlation for q in range(A.shape[0])]
+            return {"spearman_mean": round(float(np.nanmean(rho)), 4),
+                    "spearman_std": round(float(np.nanstd(rho)), 4),
+                    "kendall_mean": round(float(np.nanmean(tau)), 4),
+                    "kendall_std": round(float(np.nanstd(tau)), 4)}
+
+        report = {"kfac_label": lab, "n_test": int(Gte.shape[0]), "n_train": int(Gtr.shape[0]),
+                  "deltas": deltas, "logix_grid_keys_used": {f"{k:g}": (f"{v:g}" if v else None)
+                                                             for k, v in used_lx_keys.items()},
+                  "pair1_dot": agree(mats["tp_dot"], mats["lx_dot"]),
+                  "pair2_precond": {f"{d:g}": agree(mats[f"tp_pc_{d:g}"], mats[f"lx_pc_{d:g}"])
+                                    for d in deltas}}
+        np.savez(args.rank_agreement_out, **mats)
+        rep_fn = args.rank_agreement_out.rsplit(".npz", 1)[0] + "_report.json"
+        with open(rep_fn, "w") as f:
+            json.dump(report, f, indent=2)
+        print("[rank-agreement]", json.dumps(report, indent=2))
+        print(f"saved -> {args.rank_agreement_out} and {rep_fn}")
+        return
+
     # ---- ground-truth LDS margins from subset retraining ----
     print(f"[exp35] retraining {args.n_subsets} subsets (frac={args.subset_frac}) ...")
     rng = np.random.default_rng(args.seed)
@@ -1031,6 +1088,17 @@ def main():
                          "instead of 4, allowing a larger kfac at the same byte budget); the "
                          "sketch is round-tripped through np.float16 to simulate real storage "
                          "precision loss, not just given a bigger kfac for free")
+    ap.add_argument("--rank_agreement_out", default=None,
+                    help="rank-agreement mode (review item 9): score both methods, dump the "
+                         "(n_test, n_train) matrices to this .npz + a _report.json with per-query "
+                         "Spearman/Kendall, and exit BEFORE retraining. Needs --factored "
+                         "--inline_precond --lora_init random --tune_logix (builds the LogIX "
+                         "relative-damping grid) --logix_permodule_damping (per-module relative "
+                         "damping, matching Traceprop's).")
+    ap.add_argument("--rank_deltas", default="1e-3,1e-4,1e-2",
+                    help="shared relative preconditioning dampings for rank-agreement pair 2 "
+                         "(delta, delta/10, 10*delta). Default centres on the tiny-model median "
+                         "delta=1e-3 selected in the quality section.")
     ap.add_argument("--kfac_values", default=None,
                     help="with --factored, comma-separated kfac widths to score explicitly "
                          "(e.g. '8,32,64') instead of the storage-matched floor/ceil bracket. "
