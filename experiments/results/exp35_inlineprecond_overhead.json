@@ -1,0 +1,15 @@
+{
+  "kfac": 8,
+  "n_tracked_layers": 25,
+  "n_train": 400,
+  "batch": 16,
+  "repeats": 40,
+  "off_ms_median": 691.68,
+  "on_ms_median": 698.28,
+  "overhead_pct_median": 3.752,
+  "overhead_pct_iqr": [
+    -0.03,
+    7.464
+  ],
+  "note": "off = factored logging pass, covariance accumulation OFF; on = SAME pass with inline K-FAC covariance of the projected factors ON. Both are single passes over the training set -- 'on' needs no separate covariance sweep, unlike LogIX. Interleaved measurement, warmup dropped."
+}

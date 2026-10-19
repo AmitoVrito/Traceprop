@@ -1,0 +1,95 @@
+{
+  "n_tracked_layers": 25,
+  "lora_rank": 8,
+  "lora_init": "pca",
+  "modules": {
+    "blocks.0.q.lora_A.logix_lora_B": {
+      "eigval_kind": "dict(forward,backward)",
+      "fwd_eigval_shape": [
+        8
+      ],
+      "bwd_eigval_shape": [
+        8
+      ],
+      "fwd_eigvec_shape": [
+        8,
+        8
+      ],
+      "bwd_eigvec_shape": [
+        8,
+        8
+      ]
+    },
+    "blocks.0.q.lora_B.logix_lora_B": {
+      "eigval_kind": "dict(forward,backward)",
+      "fwd_eigval_shape": [
+        8
+      ],
+      "bwd_eigval_shape": [
+        8
+      ],
+      "fwd_eigvec_shape": [
+        8,
+        8
+      ],
+      "bwd_eigvec_shape": [
+        8,
+        8
+      ]
+    },
+    "blocks.0.k.lora_A.logix_lora_B": {
+      "eigval_kind": "dict(forward,backward)",
+      "fwd_eigval_shape": [
+        8
+      ],
+      "bwd_eigval_shape": [
+        8
+      ],
+      "fwd_eigvec_shape": [
+        8,
+        8
+      ],
+      "bwd_eigvec_shape": [
+        8,
+        8
+      ]
+    },
+    "blocks.0.k.lora_B.logix_lora_B": {
+      "eigval_kind": "dict(forward,backward)",
+      "fwd_eigval_shape": [
+        8
+      ],
+      "bwd_eigval_shape": [
+        8
+      ],
+      "fwd_eigvec_shape": [
+        8,
+        8
+      ],
+      "bwd_eigvec_shape": [
+        8,
+        8
+      ]
+    },
+    "blocks.0.v.lora_A.logix_lora_B": {
+      "eigval_kind": "dict(forward,backward)",
+      "fwd_eigval_shape": [
+        8
+      ],
+      "bwd_eigval_shape": [
+        8
+      ],
+      "fwd_eigvec_shape": [
+        8,
+        8
+      ],
+      "bwd_eigvec_shape": [
+        8,
+        8
+      ]
+    }
+  },
+  "repeat_same_damping_identical": true,
+  "state_mutated_across_calls": false,
+  "default_run_note": "logix_preconditioned above used damping=None; LogIX's precondition_kfac sets damping inside the module loop, so modules after the first reuse module-0's absolute damping."
+}

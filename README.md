@@ -11,17 +11,12 @@ pip install traceprop
 [![PyPI](https://img.shields.io/pypi/v/traceprop)](https://pypi.org/project/traceprop/)
 [![Python](https://img.shields.io/pypi/pyversions/traceprop)](https://pypi.org/project/traceprop/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
-[![HF Space](https://img.shields.io/badge/🤗%20HuggingFace-Live%20Demo-yellow)](https://huggingface.co/spaces/Nautiverse/traceprop-demo)
 
 ---
 
-## 🤗 Live Demo
+## 🤗 Demo
 
-Try Traceprop interactively — no install needed:
-
-**[huggingface.co/spaces/Nautiverse/traceprop-demo](https://huggingface.co/spaces/Nautiverse/traceprop-demo)**
-
-The demo covers all three core capabilities on the Wisconsin Breast Cancer dataset (CPU-only):
+Traceprop ships an interactive demo (see `hf_space/`) covering all three core capabilities on the Wisconsin Breast Cancer dataset (CPU-only):
 
 | Tab | What it shows |
 |-----|--------------|
@@ -124,7 +119,7 @@ report = tp.compliance_report(
     tensor=norm_a,
     system_name="CreditScorer-v1",
     system_version="1.0.0",
-    deployer_name="Amit N.",
+    deployer_name="Your Name",
     high_risk_category="credit_scoring",
     output_path="compliance_report.json",
 )
@@ -208,7 +203,7 @@ report = tp.compliance_report(
     tensor=output_tensor,
     system_name="MyModel",
     system_version="1.0.0",
-    deployer_name="Amit N.",
+    deployer_name="Your Name",
     high_risk_category="credit_scoring",
     output_path="report.json",   # optional: write to file
 )

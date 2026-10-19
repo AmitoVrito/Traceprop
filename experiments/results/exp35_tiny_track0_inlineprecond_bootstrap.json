@@ -1,0 +1,49 @@
+{
+  "npz": "exp35_tiny_track0_inlineprecond_raw.npz",
+  "n_boot": 2000,
+  "n_eval": 70,
+  "n_val": 30,
+  "n_subsets": 200,
+  "comparisons": {
+    "kfac7: inlineprecond - logix_preconditioned": {
+      "lds_diff": 0.0553,
+      "ci95": [
+        0.0403,
+        0.0724
+      ],
+      "frac_resamples_ge_0": 1.0,
+      "ties_or_beats": true
+    },
+    "kfac7: inlineprecond - logix_dot": {
+      "lds_diff": 0.0739,
+      "ci95": [
+        0.0546,
+        0.0967
+      ],
+      "frac_resamples_ge_0": 1.0,
+      "ties_or_beats": true
+    },
+    "kfac8: inlineprecond - logix_preconditioned": {
+      "lds_diff": 0.0585,
+      "ci95": [
+        0.0434,
+        0.0758
+      ],
+      "frac_resamples_ge_0": 1.0,
+      "ties_or_beats": true
+    },
+    "kfac8: inlineprecond - logix_dot": {
+      "lds_diff": 0.0771,
+      "ci95": [
+        0.0574,
+        0.0999
+      ],
+      "frac_resamples_ge_0": 1.0,
+      "ties_or_beats": true
+    }
+  },
+  "decision": {
+    "kfac7": "PAPER CONTRIBUTION: inline-precond ties-or-beats LogIX preconditioned at all-layer on the held-out eval split (CI includes or exceeds zero).",
+    "kfac8": "PAPER CONTRIBUTION: inline-precond ties-or-beats LogIX preconditioned at all-layer on the held-out eval split (CI includes or exceeds zero)."
+  }
+}

@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
 authors = [
-  {name = "Amit Nautiyal", email = "research.amit.n@gmail.com"},
+  {name = "Traceprop Authors"},
 ]
 keywords = [
   "data lineage",

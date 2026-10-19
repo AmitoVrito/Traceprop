@@ -763,8 +763,6 @@ with gr.Blocks(title="Traceprop — Training Data Attribution & Provenance") as 
                         "Open an issue directly at [AmitoVrito/Traceprop/issues]"
                         "(https://github.com/AmitoVrito/Traceprop/issues) "
                         "for faster tracking and discussion.\n\n"
-                        "**Questions?**  \n"
-                        "Email: research.amit.n@gmail.com\n\n"
                         "---\n"
                         "**What we'd love to hear:**\n"
                         "- Your use case and industry\n"
