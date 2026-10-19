@@ -120,6 +120,7 @@ class LoRAGradientLogger:
         kfac: int = 16,
         inline_precond: bool = False,
         grouped_dispatch: bool = False,
+        flush_bytes: Optional[int] = None,
     ) -> None:
         if not target_modules:
             raise ValueError(
@@ -176,6 +177,14 @@ class LoRAGradientLogger:
         self.sketch_dim: Optional[int] = None  # stored (projected) dim
         self._gpu_buffer: list = []  # deferred projected batches (on device)
         self._gpu_buffer_idx: list = []  # matching sample indices
+        # Optional periodic-flush threshold for the device-side buffer, in BYTES
+        # of accumulated projected sketches. None (default) keeps the original
+        # policy: one host drain at end of run, which is what the reported
+        # overhead numbers were measured under. Set a byte budget to bound peak
+        # buffer memory on long runs; drain() is then triggered from
+        # flush_step(buffer=True) as soon as the buffer exceeds the budget.
+        self.flush_bytes = flush_bytes
+        self._buffered_bytes = 0
         self.store._proj_dim = proj_dim
         self._attach()
 
@@ -554,6 +563,9 @@ class LoRAGradientLogger:
         if buffer:
             self._gpu_buffer.append(proj)
             self._gpu_buffer_idx.extend(int(i) for i in idx_list)
+            self._buffered_bytes += proj.element_size() * proj.nelement()
+            if self.flush_bytes is not None and self._buffered_bytes >= self.flush_bytes:
+                self.drain()
             return n
 
         self._commit(proj.detach().cpu().numpy().astype(np.float32, copy=False), idx_list)
@@ -580,6 +592,7 @@ class LoRAGradientLogger:
         n = allproj.shape[0]
         self._gpu_buffer.clear()
         self._gpu_buffer_idx.clear()
+        self._buffered_bytes = 0
         return n
 
     def detach(self) -> None:

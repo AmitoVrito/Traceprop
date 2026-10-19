@@ -683,8 +683,14 @@ def run(args):
         bpe_variants = [(4, "")] + ([(2, "_fp16")] if getattr(args, "fp16", False) else [])
         for bytes_per_element, suffix in bpe_variants:
             ideal_kfac = (logix_bytes_per_example / bytes_per_element / n_tracked_layers) ** 0.5
-            kfac_candidates = sorted({max(1, int(np.floor(ideal_kfac))),
-                                       max(1, int(np.ceil(ideal_kfac)))})
+            if getattr(args, "kfac_values", None):
+                # Explicit k-sweep: score exactly the requested widths. Storage
+                # accounting below still reports bytes/example per kfac, so the
+                # storage cost of each swept k stays visible.
+                kfac_candidates = sorted({max(1, int(v)) for v in args.kfac_values.split(",")})
+            else:
+                kfac_candidates = sorted({max(1, int(np.floor(ideal_kfac))),
+                                           max(1, int(np.ceil(ideal_kfac)))})
             for kfac in kfac_candidates:
                 label = f"{kfac}{suffix}"
                 bytes_achieved = n_tracked_layers * kfac ** 2 * bytes_per_element
@@ -1025,6 +1031,11 @@ def main():
                          "instead of 4, allowing a larger kfac at the same byte budget); the "
                          "sketch is round-tripped through np.float16 to simulate real storage "
                          "precision loss, not just given a bigger kfac for free")
+    ap.add_argument("--kfac_values", default=None,
+                    help="with --factored, comma-separated kfac widths to score explicitly "
+                         "(e.g. '8,32,64') instead of the storage-matched floor/ceil bracket. "
+                         "Used for the k-sweep; does not change the stored-bytes accounting, "
+                         "which is still reported per kfac.")
     ap.add_argument("--inline_precond", action="store_true",
                     help="with --factored, accumulate K-FAC covariance of the projected "
                          "factors INLINE during the (same) logging pass and apply damped "
