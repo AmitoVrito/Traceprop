@@ -11,7 +11,6 @@ pip install traceprop
 [![PyPI](https://img.shields.io/pypi/v/traceprop)](https://pypi.org/project/traceprop/)
 [![Python](https://img.shields.io/pypi/pyversions/traceprop)](https://pypi.org/project/traceprop/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20035922.svg)](https://doi.org/10.5281/zenodo.20035922)
 [![HF Space](https://img.shields.io/badge/🤗%20HuggingFace-Live%20Demo-yellow)](https://huggingface.co/spaces/Nautiverse/traceprop-demo)
 
 ---
@@ -447,26 +446,6 @@ cd Traceprop
 pip install -e ".[dev]"
 pytest
 ```
-
----
-
-## Citation
-
-If you use Traceprop in research, please cite:
-
-```bibtex
-@misc{traceprop2027,
-  author    = {Amit Nautiyal},
-  title     = {{Traceprop}: Computation-Level Data Lineage, Gradient Attribution,
-               and Provenance-Guided Unlearning in Production {ML}},
-  year      = {2027},
-  doi       = {10.5281/zenodo.20036000},
-  url       = {https://zenodo.org/records/20036000},
-  note      = {Software: \url{https://pypi.org/project/traceprop/}}
-}
-```
-
-A Zenodo preprint is available at **https://zenodo.org/records/20036000** (DOI: 10.5281/zenodo.20036000).
 
 ---
 
